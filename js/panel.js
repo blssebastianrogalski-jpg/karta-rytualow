@@ -719,7 +719,7 @@
       return `<div class="list-row" style="flex-direction:column;gap:4px">
         <div class="row" style="align-items:baseline"><span>${esc(s.product_name)}${s.qty > 1 ? ' × ' + s.qty : ''}</span><span class="strong" style="color:var(--text)">${zl(s.total)}</span></div>
         <div class="row" style="align-items:center"><span class="small">${esc(when)}${s.order_number ? ' · nr ' + esc(s.order_number) : ''}${s.stamps_added > 0 ? ' · +' + s.stamps_added + ' piecz.' : ''}</span>
-          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}" style="${bad ? 'font-size:13px' : ''}">${esc(s.receipt === 'pending' && s.order_id ? RECEIPT.waiting_payment : RECEIPT[s.receipt] || s.receipt)}${!ok && !bad && s.order_id ? ` <button class="linkbtn" data-check="${s.order_id}" style="min-height:0;padding:0;font-size:13px">sprawdź</button>` : ''}</span></div>
+          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}" style="${bad ? 'font-size:13px' : ''}">${esc(s.receipt === 'pending' && s.order_id ? RECEIPT.waiting_payment : RECEIPT[s.receipt] || s.receipt)}${!ok && s.receipt !== 'failed' && s.order_id ? ` <button class="linkbtn" data-check="${s.order_id}" style="min-height:0;padding:0;font-size:13px">sprawdź</button>` : ''}</span></div>
         ${s.error ? `<span class="error" style="font-size:12.5px">${esc(s.error)}</span>` : ''}
       </div>`;
     }).join('');
