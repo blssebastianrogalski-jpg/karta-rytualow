@@ -18,7 +18,7 @@
     stamp: 'Pojedynczy rytuał',
     package_buy: 'Zakup pakietu',
     package_visit: 'Wizyta z pakietu',
-    birthday: 'Rytuał urodzinowy −50%'
+    birthday: 'Rytuał urodzinowy −25%'
   };
 
   // ---------- start ----------
@@ -56,16 +56,16 @@
         <img src="img/mark.png" alt="" style="width:120px;height:120px">
         <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
         <h1>Każdy rytuał<br>coś Ci daje</h1>
-        <p class="lead">Zbieraj pieczątki za wizyty w studiu. Przy 5. rytuale masz −15%, przy 10. aż −30%. A w dniu urodzin czeka na Ciebie −50%.</p>
+        <p class="lead">Zbieraj pieczątki za wizyty w studiu. Przy 5. rytuale masz −15%, przy 10. aż −30%. A w dniu urodzin czeka na Ciebie −25%.</p>
       </div>
-      <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −50%</span></div>
+      <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −25%</span></div>
       ${msg ? '<p class="error" role="alert">' + esc(msg) + '</p>' : ''}
       <form class="panel" id="joinForm" novalidate>
         <h2>Załóż swoją kartę</h2>
         <div class="field"><label for="jName">Imię i nazwisko</label><input class="input" id="jName" autocomplete="name" required placeholder="np. Anna Kowalska"></div>
         <div class="field"><label for="jPhone">Telefon (opcjonalnie)</label><input class="input" id="jPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000"></div>
         <div class="field">
-          <span class="label" id="jBdayL">Data urodzin (do rabatu −50%)</span>
+          <span class="label" id="jBdayL">Data urodzin (do rabatu −25%)</span>
           <div class="split" role="group" aria-labelledby="jBdayL">
             <select class="input" id="jDay" aria-label="Dzień urodzin">${UI.dayOptions()}</select>
             <select class="input" id="jMonth" aria-label="Miesiąc urodzin">${UI.monthOptions()}</select>
@@ -137,7 +137,7 @@
     const visits = (card.visits || []).slice(0, 5);
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
-      ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −50% na dowolny rytuał →</span></button>' : ''}
+      ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −25% na dowolny rytuał →</span></button>' : ''}
       <section class="panel" aria-label="Karta rytuałów">
         <div class="row"><span class="eyebrow eyebrow--gold">Karta rytuałów</span><span class="strong" style="font-size:15px">${card.stamps} / 10</span></div>
         ${UI.stampGrid(card.stamps, { animate })}
@@ -180,7 +180,7 @@
       <h1>Prezent urodzinowy</h1>
       <section class="panel panel--gold bday-hero">
         <img src="img/mark.png" alt="">
-        <span class="big">−50%</span>
+        <span class="big">−25%</span>
         <span class="lead">na dowolny rytuał w dniu Twoich urodzin</span>
       </section>
       <section class="panel" style="gap:12px">
