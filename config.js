@@ -1,9 +1,9 @@
 // Ustawienia aplikacji.
-// Dopóki SUPABASE_URL jest puste, aplikacja działa w TRYBIE DEMO:
+// Gdy SUPABASE_URL i SUPABASE_ANON_KEY są puste, aplikacja działa w TRYBIE DEMO:
 // dane zapisują się tylko w tej przeglądarce (do testów).
 window.APP_CONFIG = {
-  SUPABASE_URL: '',
-  SUPABASE_ANON_KEY: '',
+  SUPABASE_URL: 'https://pqvndgttgzaosjqjtxbg.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_Fs1pn9qjzVEHJjr9Qt8dEw_WicjPg3C',
 
   STUDIO_NAME: 'Twoje Ciało Twój Dobrostan',
   BOOKSY_URL: 'https://twojecialotwojdobrostan69.booksy.com/a/',
