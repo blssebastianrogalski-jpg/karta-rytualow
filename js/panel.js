@@ -255,6 +255,7 @@
     btn.disabled = true;
     try {
       current = await Api.recordVisit(c.id, mode, service, currentPlan);
+      if (mode !== 'package_visit') Api.notifyStamp(c.id, current.stamps).catch(() => {});
       if (service) lastService = service;
       currentPlan = null;
       const first = c.name.split(' ')[0];
