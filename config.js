@@ -13,7 +13,7 @@ window.APP_CONFIG = {
   FACEBOOK_URL: 'https://fb.com/jrtwojecialo',
   WEBSITE_URL: 'https://twojecialotwojdobrostan.pl',
   // Klucz publiczny VAPID do powiadomień push. Puste = przycisk ukryty.
-  PUSH_PUBLIC_KEY: '',
+  PUSH_PUBLIC_KEY: 'BMmiIwyPch5Ffp9O9CYb81HmMhVIsFrMJ4HesZMXJ1btYHOWiaXBz70A_Ijez4BR457jvdwwgWUPTA68MbrX2TM',
   APP_URL: 'https://karta.twojecialotwojdobrostan.pl/',
 
   // Rytuały do wyboru przy dodawaniu pieczątki
