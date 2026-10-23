@@ -136,6 +136,8 @@
     }
     const pushOffer = CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && Notification.permission === 'default';
     if (pushOffer) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span style="flex:1">Chcesz przypomnienie o urodzinach i nowych pieczątkach?</span><button class="btn btn--line btn--sm" id="pushBtn">Włącz</button></div>';
+    const pushBlocked = CFG.PUSH_PUBLIC_KEY && 'Notification' in window && Notification.permission === 'denied';
+    if (pushBlocked) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Nie dostajesz przypomnień? Odblokuj powiadomienia: stuknij ikonę kłódki przy adresie, potem <b>Uprawnienia</b> → <b>Powiadomienia</b> → <b>Zezwól</b>.</span></div>';
     const visits = (card.visits || []).slice(0, 5);
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
