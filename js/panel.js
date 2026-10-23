@@ -269,7 +269,7 @@
   function smsText(c) {
     const p = UI.progressText(c.stamps);
     return 'Dzień dobry, ' + c.name.split(' ')[0] + '! Na Twojej karcie rytuałów w studiu ' + CFG.STUDIO_NAME + ' masz ' + c.stamps + '/10 pieczątek. ' +
-      p.head + '. Kartę możesz mieć w telefonie: ' + linkFor(c) + ' Do zobaczenia!';
+      p.head + '. Twoja karta: ' + linkFor(c) + ' Załóż aplikację, żeby mieć kartę zawsze pod ręką: ' + appUrl() + ' Do zobaczenia!';
   }
   function smsHref(c) {
     const num = (c.phone || '').replace(/[^\d+]/g, '');
