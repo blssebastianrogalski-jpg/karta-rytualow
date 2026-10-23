@@ -66,6 +66,7 @@
         Skanuj kod QR klientki
       </button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
+      ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="bdays"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><span class="eyebrow">Plan dnia · ${new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
@@ -79,9 +80,29 @@
       </section>`;
     $('#scanBtn').addEventListener('click', openScanner);
     $('#newBtn').addEventListener('click', () => openNewCard());
+    const opb = $('#ownerPushBtn');
+    if (opb) opb.addEventListener('click', enableOwnerPush);
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
     loadPlan();
     loadList();
+  }
+
+  // Powiadomienia dla studia (dzień w studiu, urodziny) na tym telefonie.
+  async function enableOwnerPush() {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { UI.toast('Bez zgody powiadomień nie będzie.'); return renderHome(); }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(CFG.PUSH_PUBLIC_KEY) });
+      await Api.saveStaffPush(sub.toJSON());
+      UI.toast('Powiadomienia dla studia włączone na tym telefonie.');
+      renderHome();
+    } catch (e) { fail(e); }
+  }
+  function base64ToBytes(b64) {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (ch) => ch.charCodeAt(0));
   }
 
   async function loadPlan() {

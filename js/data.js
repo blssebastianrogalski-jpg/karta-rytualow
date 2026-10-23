@@ -110,6 +110,7 @@
       }),
       savePushSubscription: async () => null,
       notifyStamp: async () => null,
+      saveStaffPush: async () => null,
       getMyCard: (token) => run(() => {
         const c = load().cards.find((x) => x.token === token);
         return c ? view(c) : null;
@@ -221,6 +222,7 @@
       registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
+      saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       notifyStamp: async (cardId, stamps) => {
         const { error } = await sb.functions.invoke('notify-stamp', { body: { card_id: cardId, stamps } });
         if (error) throw new Error(error.message);
