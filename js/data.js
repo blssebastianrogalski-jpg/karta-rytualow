@@ -108,6 +108,7 @@
         db.cards.push(c); save(db);
         return view(c);
       }),
+      savePushSubscription: async () => null,
       getMyCard: (token) => run(() => {
         const c = load().cards.find((x) => x.token === token);
         return c ? view(c) : null;
@@ -218,6 +219,7 @@
       demo: false,
       registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
+      savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       session: async () => {
         const { data } = await sb.auth.getSession();
         if (!data.session) return null;

@@ -12,6 +12,8 @@ window.APP_CONFIG = {
   INSTAGRAM_URL: 'https://www.instagram.com/jrtwojecialo',
   FACEBOOK_URL: 'https://fb.com/jrtwojecialo',
   WEBSITE_URL: 'https://twojecialotwojdobrostan.pl',
+  // Klucz publiczny VAPID do powiadomień push. Puste = przycisk ukryty.
+  PUSH_PUBLIC_KEY: '',
   APP_URL: 'https://karta.twojecialotwojdobrostan.pl/',
 
   // Rytuały do wyboru przy dodawaniu pieczątki

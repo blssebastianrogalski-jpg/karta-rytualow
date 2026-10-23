@@ -134,6 +134,8 @@
       if (installEvt) install = '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span style="flex:1">Dodaj kartę do ekranu telefonu, będzie zawsze pod ręką.</span><button class="btn btn--line btn--sm" id="installBtn">Dodaj</button></div>';
       else if (ios) install = '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Dodaj kartę do ekranu telefonu: stuknij <b>Udostępnij</b> ⬆︎, a potem <b>Do ekranu początkowego</b>.</span></div>';
     }
+    const pushOffer = CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && Notification.permission === 'default';
+    if (pushOffer) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span style="flex:1">Chcesz przypomnienie o urodzinach i nowych pieczątkach?</span><button class="btn btn--line btn--sm" id="pushBtn">Włącz</button></div>';
     const visits = (card.visits || []).slice(0, 5);
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
@@ -152,8 +154,28 @@
       <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a><br><a href="${esc(CFG.INSTAGRAM_URL)}" target="_blank" rel="noopener">Instagram</a> · <a href="${esc(CFG.FACEBOOK_URL)}" target="_blank" rel="noopener">Facebook</a> · <a href="${esc(CFG.WEBSITE_URL)}" target="_blank" rel="noopener">Strona studia</a></p>`;
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); });
+    const pb = $('#pushBtn');
+    if (pb) pb.addEventListener('click', enablePush);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
+  }
+
+  // Zgoda na powiadomienia i zapis subskrypcji na karcie klientki.
+  async function enablePush() {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { UI.toast('Powiadomienia wyłączone. Możesz je włączyć później w ustawieniach telefonu.'); return render(); }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(CFG.PUSH_PUBLIC_KEY) });
+      await Api.savePushSubscription(CardStore.get(), sub.toJSON());
+      UI.toast('Powiadomienia włączone.');
+    } catch (e) { UI.toast('Nie udało się włączyć powiadomień.'); }
+    render();
+  }
+  function base64ToBytes(b64) {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (ch) => ch.charCodeAt(0));
   }
 
   // ---------- urodziny ----------
