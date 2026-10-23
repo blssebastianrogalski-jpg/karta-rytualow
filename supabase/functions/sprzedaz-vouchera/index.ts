@@ -7,7 +7,11 @@
 // Body (POST):
 //   { action: "list" }                                  → lista voucherów z cenami i pieczątkami
 //   { action: "sell", client_ref, product_id, qty, payment, name?, email?, phone?, card_id? }
-//   { action: "status", order_id }                      → status paragonu
+//   { action: "status", order_id }                      → status płatności i paragonu
+//
+// Płatność: gotowka i blik_telefon (BLIK na telefon) są opłacone od razu, paragon drukuje się zaraz.
+// blik to kod BLIK przez PayU: sklep zwraca pay_url, a zamówienie jest opłacone dopiero
+// po zaksięgowaniu. Wtedy drukuje się paragon i dopiero wtedy dodajemy pieczątki.
 
 const WP = "https://twojecialotwojdobrostan.pl/wp-json/tctd/v1/sprzedaz";
 const base = Deno.env.get("SUPABASE_URL")!;
@@ -20,8 +24,9 @@ const cors = {
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: cors });
 const db = { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/json" };
-const PAYMENTS = ["gotowka", "karta", "blik"];
+const PAYMENTS = ["gotowka", "blik", "blik_telefon"];
 const RECEIPTS = ["queued", "sent", "confirmed", "error"];
+const SHOP = "https://twojecialotwojdobrostan.pl/";
 
 // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
 // Pakiet rozpoznajemy po nazwie z liczbą wizyt („Kobido START — 3 wizyty”).
@@ -61,7 +66,26 @@ async function vouchers() {
 }
 
 async function updateSale(filter: string, patch: Record<string, unknown>) {
-  await fetch(`${base}/rest/v1/voucher_sales?${filter}`, { method: "PATCH", headers: db, body: JSON.stringify(patch) });
+  const r = await fetch(`${base}/rest/v1/voucher_sales?${filter}`, {
+    method: "PATCH", headers: { ...db, Prefer: "return=representation" }, body: JSON.stringify(patch),
+  });
+  const rows = await r.json().catch(() => []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// Pieczątki za zakup pakietu (istniejąca funkcja record_visit, ta sama co w panelu).
+async function addStamps(auth: string, cardId: string, service: string, count: number) {
+  let added = 0, stampError: string | null = null, card: unknown = null;
+  for (let i = 0; i < count; i++) {
+    const r = await fetch(`${base}/rest/v1/rpc/record_visit`, {
+      method: "POST", headers: { apikey: anon, Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_id: cardId, p_mode: "package_buy", p_service: service }),
+    });
+    const out = await r.json();
+    if (!r.ok) { stampError = String(out?.message || "Nie udało się dodać pieczątki.").replace(/^.*?:\s*/, ""); break; }
+    card = out; added++;
+  }
+  return { added, stampError, card };
 }
 
 Deno.serve(async (req) => {
@@ -83,9 +107,26 @@ Deno.serve(async (req) => {
     if (body.action === "status") {
       const orderId = Number(body.order_id);
       if (!Number.isInteger(orderId) || orderId <= 0) return json({ error: "Brak numeru zamówienia." }, 400);
-      const s = await wp(`/${orderId}`) as { order_number?: string; total?: number | string; receipt?: string };
-      if (s && RECEIPTS.includes(String(s.receipt))) await updateSale(`order_id=eq.${orderId}`, { receipt: s.receipt });
-      return json(s);
+      const s = await wp(`/${orderId}`) as {
+        order_number?: string; total?: number | string; paid?: boolean; failed?: boolean; receipt?: string;
+      };
+      if (!s) return json({ error: "Sklep nie zwrócił statusu." }, 502);
+      if (s.failed) {
+        await updateSale(`order_id=eq.${orderId}&receipt=neq.failed`, { receipt: "failed", error: "Płatność BLIK nieudana lub anulowana." });
+        await updateSale(`order_id=eq.${orderId}&stamps_added=eq.-2`, { stamps_added: 0 });
+        return json(s);
+      }
+      if (s.paid === false) return json(s);
+      if (RECEIPTS.includes(String(s.receipt))) await updateSale(`order_id=eq.${orderId}`, { receipt: s.receipt });
+
+      // BLIK kodem: pieczątki dopiero po opłaceniu. stamps_added = -2 znaczy „należą się po opłaceniu”.
+      // Zmiana na -1 rezerwuje sprzedaż, żeby dwa równoległe sprawdzenia nie dodały pieczątek podwójnie.
+      const [row] = await updateSale(`order_id=eq.${orderId}&stamps_added=eq.-2&card_id=not.is.null`, { stamps_added: -1 });
+      const due = row ? stampsFor(row.product_name) * row.qty : 0;
+      if (!row) return json(s);
+      const st = await addStamps(auth, row.card_id, row.product_name, due);
+      await updateSale(`id=eq.${row.id}`, { stamps_added: st.added, ...(st.stampError ? { error: "Pieczątki: " + st.stampError } : {}) });
+      return json({ ...s, stamps_expected: due, stamps_added: st.added, stamp_error: st.stampError, card: st.card });
     }
 
     if (body.action === "sell") {
@@ -122,13 +163,14 @@ Deno.serve(async (req) => {
       if (!ins.ok || !Array.isArray(rows)) return json({ error: "Nie udało się zapisać sprzedaży.", detail: rows }, 500);
       const sale = rows[0];
 
-      let order: { order_id: number; order_number: string; total: number | string };
+      let order: { order_id: number; order_number: string; total: number | string; paid?: boolean; pay_url?: string };
       try {
         order = await wp("", {
           method: "POST",
           body: JSON.stringify({ product_id: productId, qty, payment, name, email, phone }),
         }) as typeof order;
         if (!order || !order.order_id) throw new Error("Sklep nie zwrócił numeru zamówienia.");
+        if (order.paid === false && !String(order.pay_url || "").startsWith(SHOP)) throw new Error("Sklep nie zwrócił strony płatności BLIK.");
       } catch (e) {
         const msg = (e as Error).name === "TimeoutError"
           ? "Sklep nie odpowiedział na czas. Zanim sprzedasz ponownie, sprawdź zamówienia w WooCommerce."
@@ -136,28 +178,25 @@ Deno.serve(async (req) => {
         await updateSale(`id=eq.${sale.id}`, { receipt: "failed", error: msg });
         return json({ error: msg }, 502);
       }
+      const paid = order.paid !== false;
       await updateSale(`id=eq.${sale.id}`, {
-        order_id: order.order_id, order_number: String(order.order_number), total: Number(order.total), receipt: "queued",
+        order_id: order.order_id, order_number: String(order.order_number), total: Number(order.total),
+        receipt: paid ? "queued" : "pending",
+        ...(!paid && cardId && product.stamps ? { stamps_added: -2 } : {}),
       });
 
-      // Pieczątki za zakup pakietu (istniejąca funkcja record_visit, ta sama co w panelu).
       const expected = cardId ? product.stamps * qty : 0;
-      let added = 0, stampError: string | null = null, card: unknown = null;
-      for (let i = 0; i < expected; i++) {
-        const r = await fetch(`${base}/rest/v1/rpc/record_visit`, {
-          method: "POST", headers: { apikey: anon, Authorization: auth, "Content-Type": "application/json" },
-          body: JSON.stringify({ p_id: cardId, p_mode: "package_buy", p_service: product.name }),
-        });
-        const out = await r.json();
-        if (!r.ok) { stampError = String(out?.message || "Nie udało się dodać pieczątki.").replace(/^.*?:\s*/, ""); break; }
-        card = out; added++;
-      }
-      if (added) await updateSale(`id=eq.${sale.id}`, { stamps_added: added });
-
-      return json({
+      const result = {
         sale_id: sale.id, order_id: order.order_id, order_number: String(order.order_number), total: Number(order.total),
-        stamps_expected: expected, stamps_added: added, stamp_error: stampError, card,
-      });
+        paid, pay_url: paid ? null : order.pay_url, stamps_expected: expected, stamps_added: 0,
+        stamp_error: null as string | null, card: null as unknown,
+      };
+      if (paid && expected) {
+        const st = await addStamps(auth, cardId!, product.name, expected);
+        if (st.added) await updateSale(`id=eq.${sale.id}`, { stamps_added: st.added });
+        Object.assign(result, { stamps_added: st.added, stamp_error: st.stampError, card: st.card });
+      }
+      return json(result);
     }
 
     return json({ error: "Nieznana akcja." }, 400);

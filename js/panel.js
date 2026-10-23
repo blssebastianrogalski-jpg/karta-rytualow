@@ -389,9 +389,14 @@
   // ---------- sprzedaż vouchera ----------
   // Panel tworzy opłacone zamówienie w sklepie (przez funkcję sprzedaz-vouchera),
   // a sklep sam drukuje paragon i wysyła voucher e-mailem.
-  const PAY = [['gotowka', 'Gotówka'], ['karta', 'Karta'], ['blik', 'BLIK']];
+  // BLIK (kod przez PayU) i BLIK na telefon (przelew) rozdziela Gotówka, żeby się nie myliły.
+  // Wartości dla sklepu: blik = kod BLIK przez PayU, blik_telefon = przelew na telefon, opłacony od razu.
+  const PAY = [['blik', 'BLIK'], ['gotowka', 'Gotówka'], ['blik_telefon', 'BLIK na telefon']];
+  const PAY_LABEL = { blik: 'BLIK kodem (PayU)', gotowka: 'gotówka', blik_telefon: 'BLIK na telefon', karta: 'karta' };
+  const BLIK_PHONE = CFG.BLIK_PHONE || CFG.PHONE;
   const RECEIPT = {
     pending: 'w trakcie',
+    waiting_payment: 'czeka na płatność BLIK',
     queued: 'paragon w kolejce',
     sent: 'paragon wysłany do drukarki',
     confirmed: 'paragon wydrukowany ✅',
@@ -400,7 +405,7 @@
   };
   const zl = (n) => Number(n || 0).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' zł';
   const stampWord = (n) => n + ' ' + UI.plural(n, 'pieczątka', 'pieczątki', 'pieczątek');
-  const newSale = () => ({ productId: null, qty: 1, payment: null, card: null, name: '', email: '', phone: '' });
+  const newSale = () => ({ productId: null, qty: 1, payment: null, transferOk: false, card: null, name: '', email: '', phone: '' });
   let vouchers = null;
   let sale = newSale();
   let pollRun = 0;
@@ -427,6 +432,7 @@
         <div class="pay" role="radiogroup" aria-label="Sposób płatności">
           ${PAY.map(([k, l]) => `<button type="button" role="radio" data-pay="${k}" aria-checked="false">${l}</button>`).join('')}
         </div>
+        <div class="panel panel--tight" id="payInfo" hidden></div>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <span class="eyebrow">4 · Dane do zamówienia</span>
@@ -453,7 +459,7 @@
     $('#hReload').addEventListener('click', loadHistory);
     $('#qMinus').addEventListener('click', () => { sale.qty = Math.max(1, sale.qty - 1); updateSale(); });
     $('#qPlus').addEventListener('click', () => { sale.qty = Math.min(10, sale.qty + 1); updateSale(); });
-    main.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => { sale.payment = b.dataset.pay; updateSale(); }));
+    main.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => { if (sale.payment !== b.dataset.pay) sale.transferOk = false; sale.payment = b.dataset.pay; updateSale(); }));
     [['#sName', 'name'], ['#sEmail', 'email'], ['#sPhone', 'phone']].forEach(([sel, key]) => {
       const el = $(sel);
       el.value = sale[key];
@@ -491,14 +497,40 @@
     main.querySelectorAll('[data-v]').forEach((b) => b.setAttribute('aria-checked', String(+b.dataset.v === sale.productId)));
     main.querySelectorAll('[data-pay]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.pay === sale.payment)));
     const q = $('#qVal'); if (q) q.textContent = sale.qty;
+    renderPayInfo(v);
+    const sb = $('#sellBtn');
+    if (sb && !sb.disabled) sb.textContent = sale.payment === 'blik' ? 'Utwórz płatność BLIK' : 'Sprzedaj i wystaw paragon';
     const t = $('#sTotal'); if (t) t.textContent = v ? zl(v.price * sale.qty) : '—';
     const info = $('#sStampInfo');
     if (info) {
       const n = v ? v.stamps * sale.qty : 0;
       info.hidden = !v;
       info.innerHTML = !v ? '' : !n ? 'Ten voucher nie daje pieczątki przy zakupie. Pieczątka przysługuje przy wizycie.'
-        : sale.card ? `Po sprzedaży na kartę ${esc(sale.card.name)} trafi <b class="gold">+${stampWord(n)}</b> (zakup pakietu).`
+        : sale.card ? `${sale.payment === 'blik' ? 'Po opłaceniu' : 'Po sprzedaży'} na kartę ${esc(sale.card.name)} trafi <b class="gold">+${stampWord(n)}</b> (zakup pakietu).`
           : `Pakiet daje ${stampWord(n)}. Wybierz kartę lojalnościową, żeby dodały się same.`;
+    }
+  }
+
+  // Podpowiedź pod płatnością: dla BLIK-a na telefon numer, kwota i potwierdzenie przelewu.
+  function renderPayInfo(v) {
+    const box = $('#payInfo');
+    if (!box) return;
+    const total = v ? zl(v.price * sale.qty) : '—';
+    if (sale.payment === 'blik_telefon') {
+      box.hidden = false;
+      box.innerHTML = `
+        <span class="small">Klientka robi przelew BLIK na telefon:</span>
+        <div class="row" style="align-items:center"><span class="small">Numer</span><span class="strong gold" style="font-size:20px;letter-spacing:.04em">${esc(BLIK_PHONE)}</span></div>
+        <div class="row" style="align-items:center"><span class="small">Kwota</span><span class="strong">${total}</span></div>
+        <div class="row" style="align-items:center"><span class="small">Tytuł</span><span class="small" style="text-align:right">${v ? 'Voucher ' + esc(v.name) : 'wybierz voucher'}</span></div>
+        <label class="check"><input type="checkbox" id="transferOk" ${sale.transferOk ? 'checked' : ''}> <span>Przelew dotarł na moje konto</span></label>`;
+      $('#transferOk').addEventListener('change', (e) => { sale.transferOk = e.target.checked; });
+    } else if (sale.payment === 'blik') {
+      box.hidden = false;
+      box.innerHTML = '<span class="small">Otworzy się strona płatności PayU. Klientka wpisuje kod BLIK z aplikacji banku i zatwierdza. Paragon wydrukuje się dopiero po opłaceniu.</span>';
+    } else {
+      box.hidden = true;
+      box.innerHTML = '';
     }
   }
 
@@ -554,11 +586,14 @@
     const err = $('#sErr');
     err.hidden = true;
     const problem = !v ? 'Wybierz voucher.' : !sale.payment ? 'Wybierz sposób płatności.'
+      : sale.payment === 'blik_telefon' && !sale.transferOk ? 'Zaznacz, że przelew BLIK dotarł na konto.'
       : sale.email.trim() && !EMAIL_RE.test(sale.email.trim()) ? 'Sprawdź adres e-mail.' : '';
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     const total = v.price * sale.qty;
-    const payLabel = PAY.find((p) => p[0] === sale.payment)[1];
-    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(total)}? ${v.name} × ${sale.qty}, płatność: ${payLabel}.`, 'Wystaw paragon'))) return;
+    const q = sale.payment === 'blik'
+      ? [`Utworzyć płatność BLIK na ${zl(total)}? ${v.name} × ${sale.qty}. Paragon wydrukuje się po opłaceniu.`, 'Utwórz płatność']
+      : [`Wystawić paragon fiskalny na ${zl(total)}? ${v.name} × ${sale.qty}, płatność: ${PAY_LABEL[sale.payment]}.`, 'Wystaw paragon'];
+    if (!(await UI.ask(q[0], q[1]))) return;
     const btn = $('#sellBtn');
     btn.disabled = true;
     btn.textContent = 'Wysyłam do sklepu…';
@@ -578,7 +613,7 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = 'Sprzedaj i wystaw paragon';
+      btn.textContent = sale.payment === 'blik' ? 'Utwórz płatność BLIK' : 'Sprzedaj i wystaw paragon';
       err.textContent = e.message;
       err.hidden = false;
     }
@@ -596,36 +631,55 @@
   function showResult(r, productName) {
     const box = $('#saleResult');
     if (!box) return;
-    const stamps = r.stamps_added ? `<span class="small gold">Dodano ${stampWord(r.stamps_added)} na kartę (zakup pakietu).</span>` : '';
-    const stampErr = r.stamp_error ? `<span class="error" style="font-size:13px">Pieczątki: ${esc(r.stamp_error)} Dodano ${r.stamps_added} z ${r.stamps_expected}.</span>` : '';
+    const waiting = r.paid === false;
     box.innerHTML = `<section class="panel panel--gold" style="gap:10px">
-      <span class="eyebrow eyebrow--gold">Sprzedano · ${esc(productName)}</span>
+      <span class="eyebrow eyebrow--gold">${waiting ? 'Płatność BLIK' : 'Sprzedano'} · ${esc(productName)}</span>
       <span class="strong" style="font-size:17px">Zamówienie nr ${esc(r.order_number)} · ${zl(r.total)}</span>
-      <div class="hint" id="rStatus" role="status">Paragon w kolejce…</div>
-      ${stamps}${stampErr}
+      ${waiting ? `<div class="qr-card" id="rPay" style="padding:18px">
+        ${UI.qrSvg(r.pay_url, { label: 'Kod QR do płatności BLIK', bg: '#ffffff' })}
+        <span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje kod swoim telefonem albo wpisuje kod BLIK na tym urządzeniu.</span>
+        <a class="btn btn--gold" href="${esc(r.pay_url)}" target="_blank" rel="noopener" style="width:100%">Zapłać kodem BLIK</a>
+      </div>` : ''}
+      <div class="hint" id="rStatus" role="status">${waiting ? 'Czekam na płatność BLIK…' : 'Paragon w kolejce…'}</div>
+      <div id="rStamps">${stampsHtml(r)}</div>
       <button class="btn btn--ghost btn--sm" id="rCheck" hidden>Sprawdź ponownie</button>
     </section>`;
-    $('#rCheck').addEventListener('click', () => pollReceipt(r.order_id));
-    pollReceipt(r.order_id);
+    $('#rCheck').addEventListener('click', () => pollReceipt(r.order_id, waiting));
+    pollReceipt(r.order_id, waiting);
   }
 
-  // Odpytuje status paragonu co 3 s, najdłużej 60 s.
-  async function pollReceipt(orderId) {
+  function stampsHtml(r) {
+    const ok = r.stamps_added ? `<span class="small gold">Dodano ${stampWord(r.stamps_added)} na kartę (zakup pakietu).</span>` : '';
+    const bad = r.stamp_error ? `<span class="error" style="font-size:13px">Pieczątki: ${esc(r.stamp_error)} Dodano ${r.stamps_added} z ${r.stamps_expected}.</span>` : '';
+    const later = r.paid === false && r.stamps_expected ? `<span class="small">Po opłaceniu na kartę trafi +${stampWord(r.stamps_expected)}.</span>` : '';
+    return ok + bad + later;
+  }
+
+  // Odpytuje status co 3 s. Paragon czekamy najdłużej 60 s, płatność BLIK do 5 minut.
+  async function pollReceipt(orderId, waitPay) {
     const run = ++pollRun;
-    const started = Date.now();
-    const out = $('#rStatus');
+    let started = Date.now();
+    let paying = !!waitPay;
     const again = $('#rCheck');
     if (again) again.hidden = true;
     const set = (text, kind) => { const el = $('#rStatus'); if (el) { el.textContent = text; el.className = 'hint' + (kind ? ' hint--' + kind : ''); } };
-    if (out) set('Paragon w kolejce…');
+    set(paying ? 'Czekam na płatność BLIK…' : 'Paragon w kolejce…');
     while (run === pollRun && tab === 'sale') {
       let s = null;
       try { s = await Api.receiptStatus(orderId); } catch (e) { /* spróbujemy jeszcze raz */ }
       if (run !== pollRun) return;
-      if (s && s.receipt === 'confirmed') { set('Paragon wydrukowany ✅', 'reward'); loadHistory(); return; }
-      if (s && s.receipt === 'error') { set('Błąd paragonu. Sprawdź program eDPS i zamówienie w WooCommerce.', 'error'); loadHistory(); break; }
-      if (Date.now() - started >= 60000) { set('Paragon czeka – sprawdź, czy komputer z eDPS jest włączony.', 'error'); loadHistory(); break; }
-      if (s && s.receipt === 'sent') set('Paragon wysłany do drukarki…');
+      if (s && s.stamps_added !== undefined) { const st = $('#rStamps'); if (st) st.innerHTML = stampsHtml(s); if (s.card && s.stamps_added) Api.notifyStamp(s.card.id, s.card.stamps).catch(() => {}); }
+      if (s && s.failed) { set('Płatność nieudana lub anulowana. Paragonu nie ma.', 'error'); const p = $('#rPay'); if (p) p.hidden = true; loadHistory(); return; }
+      if (s && s.paid === false) {
+        if (Date.now() - started >= 300000) { set('Płatność BLIK jeszcze nie dotarła. Sprawdź ponownie za chwilę.', 'error'); loadHistory(); break; }
+        set('Czekam na płatność BLIK…');
+      } else {
+        if (paying) { paying = false; started = Date.now(); const p = $('#rPay'); if (p) p.hidden = true; }
+        if (s && s.receipt === 'confirmed') { set('Paragon wydrukowany ✅', 'reward'); loadHistory(); return; }
+        if (s && s.receipt === 'error') { set('Błąd paragonu. Sprawdź program eDPS i zamówienie w WooCommerce.', 'error'); loadHistory(); break; }
+        if (Date.now() - started >= 60000) { set('Paragon czeka – sprawdź, czy komputer z eDPS jest włączony.', 'error'); loadHistory(); break; }
+        set(s && s.receipt === 'sent' ? 'Paragon wysłany do drukarki…' : 'Opłacone. Paragon w kolejce…');
+      }
       await new Promise((res) => setTimeout(res, 3000));
     }
     const b = $('#rCheck');
@@ -645,14 +699,14 @@
       const bad = s.receipt === 'error' || s.receipt === 'failed';
       return `<div class="list-row" style="flex-direction:column;gap:4px">
         <div class="row" style="align-items:baseline"><span>${esc(s.product_name)}${s.qty > 1 ? ' × ' + s.qty : ''}</span><span class="strong" style="color:var(--text)">${zl(s.total)}</span></div>
-        <div class="row" style="align-items:center"><span class="small">${esc(when)}${s.order_number ? ' · nr ' + esc(s.order_number) : ''}${s.stamps_added ? ' · +' + s.stamps_added + ' piecz.' : ''}</span>
-          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}" style="${bad ? 'font-size:13px' : ''}">${esc(RECEIPT[s.receipt] || s.receipt)}${!ok && !bad && s.order_id ? ` <button class="linkbtn" data-check="${s.order_id}" style="min-height:0;padding:0;font-size:13px">sprawdź</button>` : ''}</span></div>
+        <div class="row" style="align-items:center"><span class="small">${esc(when)}${s.order_number ? ' · nr ' + esc(s.order_number) : ''}${s.stamps_added > 0 ? ' · +' + s.stamps_added + ' piecz.' : ''}</span>
+          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}" style="${bad ? 'font-size:13px' : ''}">${esc(s.receipt === 'pending' && s.order_id ? RECEIPT.waiting_payment : RECEIPT[s.receipt] || s.receipt)}${!ok && !bad && s.order_id ? ` <button class="linkbtn" data-check="${s.order_id}" style="min-height:0;padding:0;font-size:13px">sprawdź</button>` : ''}</span></div>
         ${s.error ? `<span class="error" style="font-size:12.5px">${esc(s.error)}</span>` : ''}
       </div>`;
     }).join('');
     box.querySelectorAll('[data-check]').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
-      try { const r = await Api.receiptStatus(+b.dataset.check); toast('Zamówienie ' + (r.order_number || b.dataset.check) + ': ' + (RECEIPT[r.receipt] || r.receipt) + '.'); } catch (e) { fail(e); }
+      try { const r = await Api.receiptStatus(+b.dataset.check); toast('Zamówienie ' + (r.order_number || b.dataset.check) + ': ' + (r.failed ? 'płatność nieudana' : r.paid === false ? RECEIPT.waiting_payment : RECEIPT[r.receipt] || r.receipt) + '.'); } catch (e) { fail(e); }
       loadHistory();
     }));
   }

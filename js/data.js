@@ -228,9 +228,10 @@
         db.sales = db.sales || [];
         const orderId = 1000 + db.sales.length + 1;
         const expected = p.card_id ? stampsFor(v.name) * p.qty : 0;
+        const paid = p.payment !== 'blik';
         let added = 0, stampError = null, card = null;
         const c = p.card_id ? db.cards.find((x) => x.id === p.card_id) : null;
-        for (let i = 0; i < expected && c; i++) {
+        for (let i = 0; i < expected && c && paid; i++) {
           if (c.stamps >= 10) { stampError = 'Karta jest pełna. Rozpocznij nową kartę.'; break; }
           c.stamps += 1;
           c.visits.unshift({ kind: 'package_buy', service: v.name, discount: Rules.discountFor(c.stamps), created_at: new Date().toISOString() });
@@ -238,19 +239,24 @@
         }
         if (c) card = view(c);
         db.sales.unshift({ id: orderId, created_at: new Date().toISOString(), card_id: p.card_id || null, product_name: v.name, qty: p.qty, total: v.price * p.qty,
-          payment: p.payment, buyer_name: p.name || null, order_id: orderId, order_number: String(orderId), receipt: 'queued', stamps_added: added });
+          payment: p.payment, buyer_name: p.name || null, order_id: orderId, order_number: String(orderId), receipt: paid ? 'queued' : 'pending', stamps_added: added });
         save(db);
-        return { order_id: orderId, order_number: String(orderId), total: v.price * p.qty, stamps_expected: expected, stamps_added: added, stamp_error: stampError, card };
+        return { order_id: orderId, order_number: String(orderId), total: v.price * p.qty, paid,
+          pay_url: paid ? null : 'https://twojecialotwojdobrostan.pl/zamowienie/zaplac/' + orderId + '/?pokaz=1',
+          stamps_expected: expected, stamps_added: added, stamp_error: stampError, card };
       }),
       receiptStatus: (orderId) => run(() => {
         guard();
         const db = load();
         const s = (db.sales || []).find((x) => x.order_id === orderId);
         if (!s) throw new Error('Nie znaleziono zamówienia.');
-        const age = (Date.now() - new Date(s.created_at)) / 1000;
+        // pokaz: płatność BLIK „przychodzi” po 8 s
+        const wait = s.payment === 'blik' ? 8 : 0;
+        const age = (Date.now() - new Date(s.created_at)) / 1000 - wait;
+        if (age < 0) return { order_number: s.order_number, total: s.total, paid: false, failed: false, receipt: 'waiting_payment' };
         s.receipt = age > 7 ? 'confirmed' : age > 3 ? 'sent' : 'queued';
         save(db);
-        return { order_number: s.order_number, total: s.total, receipt: s.receipt };
+        return { order_number: s.order_number, total: s.total, paid: true, failed: false, receipt: s.receipt };
       }),
       voucherSales: () => run(() => { guard(); return (load().sales || []).slice(0, 20); }),
       resetDemo: () => { try { localStorage.removeItem(KEY); localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
