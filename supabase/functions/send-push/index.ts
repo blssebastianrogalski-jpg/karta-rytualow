@@ -16,6 +16,7 @@ Deno.serve(async (req) => {
   const filter = card_id ? `&card_id=eq.${card_id}` : "";
   const res = await fetch(`${base}/rest/v1/push_subscriptions?select=id,endpoint,p256dh,auth${filter}`, { headers });
   const subs = await res.json();
+  if (!Array.isArray(subs)) return Response.json({ error: subs }, { status: 500 });
 
   let sent = 0;
   let removed = 0;
