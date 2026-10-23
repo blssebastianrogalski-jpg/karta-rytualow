@@ -1,0 +1,17 @@
+{
+  "name": "Karta rytuałów · Twoje Ciało Twój Dobrostan",
+  "short_name": "Karta rytuałów",
+  "description": "Karta lojalnościowa studia masażu Twoje Ciało Twój Dobrostan.",
+  "lang": "pl",
+  "start_url": "./#card",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "background_color": "#0E0D0B",
+  "theme_color": "#0E0D0B",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

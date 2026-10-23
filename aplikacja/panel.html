@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Panel studia · Twoje Ciało Twój Dobrostan</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0E0D0B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Panel studia">
+<link rel="manifest" href="manifest-panel.webmanifest">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Jost:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="demoBar" class="demo-bar" hidden>Tryb pokazowy: hasło <b>demo</b>, dane tylko na tym urządzeniu. <a href="./">Widok klientki →</a></div>
+<div class="app" id="app">
+  <header class="top">
+    <a class="brand" href="panel.html" aria-label="Panel studia">
+      <img src="img/mark-96.png" alt="">
+      <span><span>TWOJE CIAŁO</span><span>TWÓJ DOBROSTAN</span></span>
+    </a>
+    <button class="btn btn--ghost btn--sm" id="logoutBtn" hidden>Wyloguj</button>
+  </header>
+  <main class="main" id="main"><div class="spinner" aria-label="Ładowanie"></div></main>
+</div>
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle"><div class="sheet__in" id="sheetIn"></div></div>
+<div class="scanner" id="scanner" hidden role="dialog" aria-modal="true" aria-label="Skaner kodu QR">
+  <video id="video" playsinline muted></video>
+  <div class="scanner__frame"></div>
+  <div class="scanner__bar">
+    <p class="small center" id="scanMsg" style="margin:0">Skieruj aparat na kod QR klientki.</p>
+    <form id="codeForm" class="btn-row">
+      <input class="input" id="codeInput" placeholder="lub wpisz kod karty" autocapitalize="characters" autocomplete="off" aria-label="Kod karty">
+      <button class="btn btn--line" type="submit" style="flex:0 0 auto;width:auto">Szukaj</button>
+    </form>
+    <button class="btn btn--ghost" id="scanClose">Zamknij</button>
+  </div>
+</div>
+<div class="print-card" id="printCard"></div>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="js/data.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/panel.js"></script>
+</body>
+</html>
