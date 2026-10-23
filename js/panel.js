@@ -467,7 +467,7 @@
       </section>`;
     bindTabs();
     $('#vReload').addEventListener('click', () => { vouchers = null; loadVouchers(); });
-    $('#hReload').addEventListener('click', loadHistory);
+    $('#hReload').addEventListener('click', () => loadHistory());
     $('#qMinus').addEventListener('click', () => { sale.qty = Math.max(1, sale.qty - 1); updateSale(); });
     $('#qPlus').addEventListener('click', () => { sale.qty = Math.min(10, sale.qty + 1); updateSale(); });
     main.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => { if (sale.payment !== b.dataset.pay) sale.transferOk = false; sale.payment = b.dataset.pay; updateSale(); }));
@@ -705,7 +705,9 @@
     if (b && run === pollRun) b.hidden = false;
   }
 
-  async function loadHistory() {
+  // Po wczytaniu historii dociąga ze sklepu aktualny status sprzedaży z ostatnich 7 dni,
+  // które nie mają jeszcze wydrukowanego paragonu (np. stary, fałszywy błąd).
+  async function loadHistory(refreshed) {
     const box = $('#sHistory');
     if (!box) return;
     let list;
@@ -728,6 +730,12 @@
       try { const r = await Api.receiptStatus(+b.dataset.check); toast('Zamówienie ' + (r.order_number || b.dataset.check) + ': ' + (r.failed ? 'płatność nieudana' : r.paid === false ? RECEIPT.waiting_payment : RECEIPT[r.receipt] || r.receipt) + '.'); } catch (e) { fail(e); }
       loadHistory();
     }));
+    if (refreshed) return;
+    const weekAgo = Date.now() - 7 * 864e5;
+    const stale = list.filter((s) => s.order_id && !['confirmed', 'failed'].includes(s.receipt) && new Date(s.created_at) > weekAgo);
+    if (!stale.length) return;
+    for (const s of stale) { try { await Api.receiptStatus(s.order_id); } catch (e) { /* zostaje stary status */ } }
+    loadHistory(true);
   }
 
   // ---------- skaner QR ----------
