@@ -6,7 +6,7 @@ window.APP_CONFIG = {
   SUPABASE_ANON_KEY: 'sb_publishable_Fs1pn9qjzVEHJjr9Qt8dEw_WicjPg3C',
 
   STUDIO_NAME: 'Twoje Ciało Twój Dobrostan',
-  BOOKSY_URL: 'https://twojecialotwojdobrostan69.booksy.com/a/',
+  BOOKSY_URL: 'https://twojecialotwojdobrostan69.booksy.com/k',
   PHONE: '500 694 094',
   ADDRESS: 'ul. Zawierciańska 4/12, 32-310 Klucze',
   INSTAGRAM_URL: 'https://www.instagram.com/jrtwojecialo',
