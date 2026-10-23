@@ -139,10 +139,16 @@
           <span><span class="client__name">${esc(p.name)}${p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : ''}</span>
           <span class="client__meta">${esc(p.service || 'rytuał')} · ${done ? esc(MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? ' · teraz −15%' : p.stamps === 9 ? ' · teraz −30%' : '')}</span></span>
         </button>
-        ${done ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}
+        ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button><button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}
       </div>`;
     }).join('') + '</div>' + (todo ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
+    // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
+    box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
+      const p = plan.find((x) => String(x.id) === b.dataset.planDel);
+      if (!(await UI.ask('Usunąć ' + p.name + ' z dzisiejszego planu? Karta i pieczątki zostaną bez zmian.', 'Usuń z planu'))) return;
+      try { await Api.planRemove(p.id); toast('Usunięto z planu dnia.'); loadPlan(); } catch (e) { fail(e); }
+    }));
   }
 
   async function loadList() {
