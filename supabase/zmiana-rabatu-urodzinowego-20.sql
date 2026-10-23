@@ -1,4 +1,4 @@
--- Zmiana rabatu urodzinowego z 50% na 25%.
+-- Zmiana rabatu urodzinowego z 50% na 20%.
 -- Uruchom w Supabase → SQL Editor (raz). Nie kasuje żadnych danych.
 
 create or replace function public.use_birthday(p_id uuid, p_service text default null, p_plan_id bigint default null)
@@ -10,7 +10,7 @@ begin
   if not public.is_bday_today(c.bday_day, c.bday_month) then raise exception 'Rabat urodzinowy działa tylko w dniu urodzin.'; end if;
   if c.birthday_used_year = y then raise exception 'Rabat urodzinowy został już wykorzystany w tym roku.'; end if;
   update public.cards set birthday_used_year = y where id = p_id returning * into c;
-  insert into public.visits (card_id, kind, service, discount) values (p_id, 'birthday', nullif(trim(coalesce(p_service, '')), ''), 25);
+  insert into public.visits (card_id, kind, service, discount) values (p_id, 'birthday', nullif(trim(coalesce(p_service, '')), ''), 20);
   if p_plan_id is not null then update public.day_plan set status = 'birthday' where id = p_plan_id; end if;
   return public.card_json(c, true);
 end $$;

@@ -18,7 +18,7 @@
     stamp: 'Pojedynczy rytuał',
     package_buy: 'Zakup pakietu',
     package_visit: 'Wizyta z pakietu',
-    birthday: 'Rytuał urodzinowy −25%',
+    birthday: 'Rytuał urodzinowy −20%',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
@@ -114,7 +114,7 @@
     const bdays = list.filter((c) => c.bday_today);
     const bBox = $('#bdays');
     if (bBox && !query) {
-      bBox.innerHTML = bdays.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:6px"><span class="eyebrow eyebrow--gold">Urodziny dziś</span>${bdays.map((c) => `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text)" data-open="${esc(c.id)}">${esc(c.name)} · ${c.birthday_used_year === y ? 'rabat już wykorzystany' : '<span class="gold">−25% na dzisiejszy rytuał</span>'}</button>`).join('')}</div>` : '';
+      bBox.innerHTML = bdays.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:6px"><span class="eyebrow eyebrow--gold">Urodziny dziś</span>${bdays.map((c) => `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text)" data-open="${esc(c.id)}">${esc(c.name)} · ${c.birthday_used_year === y ? 'rabat już wykorzystany' : '<span class="gold">−20% na dzisiejszy rytuał</span>'}</button>`).join('')}</div>` : '';
       bBox.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
     }
     if (!list.length) { box.innerHTML = '<p class="small" style="padding:14px 4px">' + (query ? 'Brak klientek o tej nazwie.' : 'Nie ma jeszcze żadnych kart.') + '</p>'; return; }
@@ -183,7 +183,7 @@
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
       </div>
       ${currentPlan ? '<p class="small gold" style="margin:0">Wizyta z planu dnia. Po zapisaniu odhaczy się w planie.</p>' : ''}
-      ${bdayAvail ? `<section class="panel panel--gold bday-today" style="gap:10px"><span class="eyebrow eyebrow--gold">Urodziny dziś · −25%</span><span class="small" style="color:var(--text-2)">Rabat urodzinowy na dzisiejszy rytuał. Nie łączy się z innymi promocjami, więc nie dodaje pieczątki.</span><button class="btn btn--gold" id="bdayBtn">Rytuał urodzinowy −25%</button></section>` : ''}
+      ${bdayAvail ? `<section class="panel panel--gold bday-today" style="gap:10px"><span class="eyebrow eyebrow--gold">Urodziny dziś · −20%</span><span class="small" style="color:var(--text-2)">Rabat urodzinowy na dzisiejszy rytuał. Nie łączy się z innymi promocjami, więc nie dodaje pieczątki.</span><button class="btn btn--gold" id="bdayBtn">Rytuał urodzinowy −20%</button></section>` : ''}
       <section class="panel">
         <div class="row"><span class="eyebrow eyebrow--gold">Karta rytuałów</span><span class="strong gold" style="font-size:16px">${c.stamps} / 10</span></div>
         ${UI.stampGrid(c.stamps, { small: true, animate })}
@@ -230,7 +230,7 @@
       try { current = await Api.removeStamp(c.id); toast('Cofnięto pieczątkę (' + current.stamps + '/10).'); renderCard(); } catch (e) { fail(e); }
     });
     on('#bdayBtn', async () => {
-      try { current = await Api.useBirthday(c.id, svc(), currentPlan); currentPlan = null; toast('Rabat urodzinowy −25% zapisany: ' + c.name + '.', 'reward'); renderCard(); } catch (e) { fail(e); }
+      try { current = await Api.useBirthday(c.id, svc(), currentPlan); currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); } catch (e) { fail(e); }
     });
     on('#planBtn', async () => { try { await Api.planAdd(c.id, svc()); toast('Dodano do planu dnia.'); } catch (e) { fail(e); } });
     on('#editBtn', () => openEdit());
@@ -282,7 +282,7 @@
       <h3>Karta rytuałów</h3>
       ${UI.qrSvg('TCTD:' + c.code, { bg: '#ffffff' })}
       <p><b>${esc(c.name)}</b> · karta ${esc(c.code)}</p>
-      <p>5. rytuał −15% · 10. rytuał −30% · w dniu urodzin −25%</p>
+      <p>5. rytuał −15% · 10. rytuał −30% · w dniu urodzin −20%</p>
       <p>Pokaż ten kod przy każdej wizycie.</p>
       <p>${esc(CFG.PHONE)} · ${esc(CFG.ADDRESS)}</p>`;
     setTimeout(() => window.print(), 300);
@@ -295,7 +295,7 @@
         ${isNew ? '<span class="eyebrow eyebrow--gold">Karta prowadzona przez studio</span><p class="small" style="margin:0">Dla klientki, która nie chce lub nie może pobrać aplikacji. Pieczątki dodajesz tutaj. Możesz jej wydrukować kartę z kodem albo wysłać SMS. Gdy kiedyś otworzy link z SMS-a, karta połączy się z aplikacją.</p>' : ''}
         <div class="field"><label for="fName">Imię i nazwisko</label><input class="input" id="fName" value="${esc(c.name || '')}" placeholder="np. Halina Mazur" autocomplete="off"></div>
         <div class="field"><label for="fPhone">Telefon (do SMS)</label><input class="input" id="fPhone" type="tel" value="${esc(c.phone || '')}" placeholder="np. 600 000 000" autocomplete="off"></div>
-        <div class="field"><span class="label" id="fBdayL">Data urodzin (do rabatu −25%)</span>
+        <div class="field"><span class="label" id="fBdayL">Data urodzin (do rabatu −20%)</span>
           <div class="split" role="group" aria-labelledby="fBdayL"><select class="input" id="fDay" aria-label="Dzień">${UI.dayOptions(c.bday_day)}</select><select class="input" id="fMonth" aria-label="Miesiąc">${UI.monthOptions(c.bday_month)}</select></div></div>
         ${isNew ? `<div class="field"><label for="fStamps">Pieczątki przeniesione z papierowej karty</label><select class="input" id="fStamps">${Array.from({ length: 10 }, (_, i) => `<option value="${i}">${i}</option>`).join('')}</select></div>` : `<div class="field"><label for="fNote">Notatka (widzi tylko studio)</label><textarea class="input" id="fNote">${esc(c.note || '')}</textarea></div>`}
         <p class="error" id="fErr" role="alert" hidden></p>

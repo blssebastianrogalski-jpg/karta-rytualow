@@ -172,7 +172,7 @@
         if (!Rules.isBdayToday(c.bday_day, c.bday_month)) throw new Error('Rabat urodzinowy działa tylko w dniu urodzin.');
         if (c.birthday_used_year === y) throw new Error('Rabat urodzinowy został już wykorzystany w tym roku.');
         c.birthday_used_year = y;
-        c.visits.unshift({ kind: 'birthday', service: service || null, discount: 25, created_at: new Date().toISOString() });
+        c.visits.unshift({ kind: 'birthday', service: service || null, discount: 20, created_at: new Date().toISOString() });
         if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = 'birthday'; }
       }); }),
       planList: () => run(() => {
