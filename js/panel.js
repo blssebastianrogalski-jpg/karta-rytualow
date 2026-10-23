@@ -23,6 +23,7 @@
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const fail = (e) => toast(e.message || 'Coś poszło nie tak.', 'error');
   const appUrl = () => CFG.APP_URL || new URL('./', location.href).href;
   const linkFor = (c) => appUrl() + '?k=' + encodeURIComponent(c.token);
@@ -248,6 +249,7 @@
       </section>
       <section class="panel" style="gap:12px">
         <span class="eyebrow">Dane klientki</span>
+        ${c.email ? `<div class="row"><span class="small">E-mail</span><span style="overflow-wrap:anywhere;text-align:right">${esc(c.email)}</span></div>` : ''}
         <div class="row"><span class="small">Telefon</span><span>${c.phone ? `<a href="tel:${esc(c.phone.replace(/\s/g, ''))}">${esc(c.phone)}</a>` : '—'}</span></div>
         <div class="row"><span class="small">Urodziny</span><span>${esc(UI.fmtBday(c.bday_day, c.bday_month) || '—')}${c.birthday_used_year === y ? ' <span class="tag">wykorzystane ' + y + '</span>' : ''}</span></div>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
@@ -335,6 +337,7 @@
         ${isNew ? '<span class="eyebrow eyebrow--gold">Karta prowadzona przez studio</span><p class="small" style="margin:0">Dla klientki, która nie chce lub nie może pobrać aplikacji. Pieczątki dodajesz tutaj. Możesz jej wydrukować kartę z kodem albo wysłać SMS. Gdy kiedyś otworzy link z SMS-a, karta połączy się z aplikacją.</p>' : ''}
         <div class="field"><label for="fName">Imię i nazwisko</label><input class="input" id="fName" value="${esc(c.name || '')}" placeholder="np. Halina Mazur" autocomplete="off"></div>
         <div class="field"><label for="fPhone">Telefon (do SMS)</label><input class="input" id="fPhone" type="tel" value="${esc(c.phone || '')}" placeholder="np. 600 000 000" autocomplete="off"></div>
+        <div class="field"><label for="fEmail">E-mail (opcjonalnie, do voucherów i e-paragonów)</label><input class="input" id="fEmail" type="email" inputmode="email" value="${esc(c.email || '')}" placeholder="np. anna@example.com" autocomplete="off"></div>
         <div class="field"><span class="label" id="fBdayL">Data urodzin (do rabatu −20%)</span>
           <div class="split" role="group" aria-labelledby="fBdayL"><select class="input" id="fDay" aria-label="Dzień">${UI.dayOptions(c.bday_day)}</select><select class="input" id="fMonth" aria-label="Miesiąc">${UI.monthOptions(c.bday_month)}</select></div></div>
         ${isNew ? `<div class="field"><label for="fStamps">Pieczątki przeniesione z papierowej karty</label><select class="input" id="fStamps">${Array.from({ length: 10 }, (_, i) => `<option value="${i}">${i}</option>`).join('')}</select></div>` : `<div class="field"><label for="fNote">Notatka (widzi tylko studio)</label><textarea class="input" id="fNote">${esc(c.note || '')}</textarea></div>`}
@@ -344,8 +347,9 @@
   }
   function readForm() {
     const day = +$('#fDay').value || null, month = +$('#fMonth').value || null;
-    const f = { name: $('#fName').value.trim(), phone: $('#fPhone').value.trim(), day, month };
+    const f = { name: $('#fName').value.trim(), phone: $('#fPhone').value.trim(), email: $('#fEmail').value.trim().toLowerCase(), day, month };
     if (f.name.length < 2) throw new Error('Wpisz imię i nazwisko.');
+    if (f.email && !EMAIL_RE.test(f.email)) throw new Error('Sprawdź adres e-mail.');
     if (!UI.validBday(day, month)) throw new Error('Sprawdź datę urodzin (dzień i miesiąc).');
     return f;
   }
@@ -508,7 +512,7 @@
       $('#cardUnpick').addEventListener('click', () => { sale.card = null; renderCardPick(); updateSale(); });
       return;
     }
-    box.innerHTML = `<div class="field"><label for="cSearch">Karta lojalnościowa (szukaj po telefonie lub nazwisku)</label>
+    box.innerHTML = `<div class="field"><label for="cSearch">Karta lojalnościowa (szukaj po telefonie, nazwisku lub e-mailu)</label>
       <input class="input" id="cSearch" type="search" autocomplete="off" placeholder="np. 600 100 200 albo Kowalska"></div>
       <div id="cResults"></div>`;
     let timer;
@@ -524,15 +528,20 @@
         res.innerHTML = list.length ? '<div class="panel panel--tight" style="background:var(--bg)">' + list.slice(0, 6).map((c) => `
           <div class="client"><button class="client__main" data-card="${esc(c.id)}">
             <span class="avatar">${esc(UI.initials(c.name))}</span>
-            <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${esc(c.phone || 'bez telefonu')} · ${c.stamps}/10</span></span>
+            <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${esc(c.phone || 'bez telefonu')}${c.email ? ' · ' + esc(c.email) : ''} · ${c.stamps}/10</span></span>
           </button></div>`).join('') + '</div>' : '<p class="small" style="margin:0">Brak kart dla tego wyszukiwania.</p>';
         res.querySelectorAll('[data-card]').forEach((b) => b.addEventListener('click', () => {
           const c = list.find((x) => x.id === b.dataset.card);
+          // dane z poprzednio wybranej karty nie mogą zostać przy nowej
+          const prev = sale.filled || {};
           sale.card = c;
           sale.name = c.name;
-          if (c.phone) sale.phone = c.phone;
+          sale.phone = c.phone || (sale.phone === prev.phone ? '' : sale.phone);
+          sale.email = c.email || (sale.email === prev.email ? '' : sale.email);
+          sale.filled = { phone: c.phone || '', email: c.email || '' };
           $('#sName').value = sale.name;
           $('#sPhone').value = sale.phone;
+          $('#sEmail').value = sale.email;
           renderCardPick();
           updateSale();
         }));
@@ -545,7 +554,7 @@
     const err = $('#sErr');
     err.hidden = true;
     const problem = !v ? 'Wybierz voucher.' : !sale.payment ? 'Wybierz sposób płatności.'
-      : sale.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sale.email.trim()) ? 'Sprawdź adres e-mail.' : '';
+      : sale.email.trim() && !EMAIL_RE.test(sale.email.trim()) ? 'Sprawdź adres e-mail.' : '';
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     const total = v.price * sale.qty;
     const payLabel = PAY.find((p) => p[0] === sale.payment)[1];
@@ -562,6 +571,7 @@
       });
       if (r.duplicate) throw new Error('Ta sprzedaż została już wysłana. Sprawdź listę ostatnich sprzedaży.');
       if (r.card && r.stamps_added) Api.notifyStamp(r.card.id, r.card.stamps).catch(() => {});
+      rememberEmail(sale.card, sale.email.trim().toLowerCase());
       sale = newSale();
       renderSale();
       showResult(r, v.name);
@@ -572,6 +582,15 @@
       err.textContent = e.message;
       err.hidden = false;
     }
+  }
+
+  // E-mail wpisany przy sprzedaży zapisuje się na karcie, żeby następnym razem wstawił się sam.
+  async function rememberEmail(card, email) {
+    if (!card || !email || card.email === email) return;
+    try {
+      const c = await Api.getCard(card.id);
+      if (c) await Api.updateCard(c.id, { name: c.name, phone: c.phone, day: c.bday_day, month: c.bday_month, note: c.note, email });
+    } catch (e) { /* sprzedaż się udała, e-mail można dopisać ręcznie */ }
   }
 
   function showResult(r, productName) {

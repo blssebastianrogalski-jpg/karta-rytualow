@@ -78,6 +78,7 @@
           mk('Ewa Zielińska', null, 21, 7, 10, 'app', ['Master Kobido UP®'])
         ]
       };
+      db.cards[0].email = 'anna.kowalska@example.com';
       const day = t.y + '-' + t.m + '-' + t.d;
       db.plan = [
         { id: 1, card_id: db.cards[3].id, day, service: 'Masaż gorącą świecą', status: 'planned' },
@@ -148,15 +149,15 @@
         q = (q || '').trim().toLowerCase();
         const qd = q.replace(/\s/g, '');
         return load().cards
-          .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.phone || '').replace(/\s/g, '').includes(qd) || c.code.toLowerCase() === q)
+          .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.phone || '').replace(/\s/g, '').includes(qd) || c.code.toLowerCase() === q || (c.email || '').toLowerCase().includes(q))
           .map((c) => ({ ...view(c), visits: undefined }))
           .sort((a, b) => (b.bday_today - a.bday_today) || a.name.localeCompare(b.name, 'pl'));
       }),
-      createStudioCard: ({ name, phone, day, month, stamps }) => run(() => {
+      createStudioCard: ({ name, phone, email, day, month, stamps }) => run(() => {
         guard();
         if (!name || name.trim().length < 2) throw new Error('Podaj imię i nazwisko.');
         const db = load();
-        const c = { id: uid(), code: rnd(6, alphabet), token: rnd(36, '0123456789abcdef'), name: name.trim(), phone: phone || null,
+        const c = { id: uid(), code: rnd(6, alphabet), token: rnd(36, '0123456789abcdef'), name: name.trim(), phone: phone || null, email: email || null,
           bday_day: day || null, bday_month: month || null, stamps: Math.max(0, Math.min(9, stamps || 0)), cards_completed: 0,
           birthday_used_year: null, source: 'studio', note: null, created_at: new Date().toISOString(), visits: [] };
         db.cards.push(c); save(db);
@@ -164,7 +165,7 @@
       }),
       updateCard: (id, f) => run(() => { guard(); return mutate(id, (c) => {
         if (!f.name || f.name.trim().length < 2) throw new Error('Podaj imię i nazwisko.');
-        Object.assign(c, { name: f.name.trim(), phone: f.phone || null, bday_day: f.day || null, bday_month: f.month || null, note: f.note || null });
+        Object.assign(c, { name: f.name.trim(), phone: f.phone || null, email: f.email || null, bday_day: f.day || null, bday_month: f.month || null, note: f.note || null });
       }); }),
       recordVisit: (id, mode, service, planId) => run(() => { guard(); return mutate(id, (c, db) => {
         if (!['stamp', 'package_buy', 'package_visit'].includes(mode)) throw new Error('Nieznany rodzaj wizyty.');
@@ -306,8 +307,8 @@
       findCard: (code) => rpc('find_card', { p_code: code }),
       getCard: (id) => rpc('get_card', { p_id: id }),
       listCards: (q) => rpc('list_cards', { p_query: q || '' }),
-      createStudioCard: ({ name, phone, day, month, stamps }) => rpc('create_studio_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_stamps: stamps || 0 }),
-      updateCard: (id, f) => rpc('update_card', { p_id: id, p_name: f.name, p_phone: f.phone || null, p_day: f.day || null, p_month: f.month || null, p_note: f.note || null }),
+      createStudioCard: ({ name, phone, email, day, month, stamps }) => rpc('create_studio_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_stamps: stamps || 0, p_email: email || null }),
+      updateCard: (id, f) => rpc('update_card', { p_id: id, p_name: f.name, p_phone: f.phone || null, p_day: f.day || null, p_month: f.month || null, p_note: f.note || null, p_email: f.email || '' }),
       recordVisit: (id, mode, service, planId) => rpc('record_visit', { p_id: id, p_mode: mode, p_service: service || null, p_plan_id: planId || null }),
       removeStamp: (id) => rpc('remove_stamp', { p_id: id }),
       startNewCard: (id) => rpc('start_new_card', { p_id: id }),
