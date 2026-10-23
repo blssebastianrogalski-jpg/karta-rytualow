@@ -26,7 +26,8 @@ const json = (body: unknown, status = 200) => Response.json(body, { status, head
 const db = { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/json" };
 const PAYMENTS = ["gotowka", "blik", "blik_telefon"];
 const RECEIPTS = ["queued", "sent", "confirmed", "error"];
-const SHOP = "https://twojecialotwojdobrostan.pl/";
+// Strona płatności: PayU albo (awaryjnie) strona zapłaty w sklepie.
+const PAY_URL = /^https:\/\/(twojecialotwojdobrostan\.pl|([a-z0-9-]+\.)*payu\.(com|pl))\//;
 
 // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
 // Pakiet rozpoznajemy po nazwie z liczbą wizyt („Kobido START — 3 wizyty”).
@@ -170,7 +171,7 @@ Deno.serve(async (req) => {
           body: JSON.stringify({ product_id: productId, qty, payment, name, email, phone }),
         }) as typeof order;
         if (!order || !order.order_id) throw new Error("Sklep nie zwrócił numeru zamówienia.");
-        if (order.paid === false && !String(order.pay_url || "").startsWith(SHOP)) throw new Error("Sklep nie zwrócił strony płatności BLIK.");
+        if (order.paid === false && !PAY_URL.test(String(order.pay_url || ""))) throw new Error("Sklep nie zwrócił strony płatności BLIK.");
       } catch (e) {
         const msg = (e as Error).name === "TimeoutError"
           ? "Sklep nie odpowiedział na czas. Zanim sprzedasz ponownie, sprawdź zamówienia w WooCommerce."
