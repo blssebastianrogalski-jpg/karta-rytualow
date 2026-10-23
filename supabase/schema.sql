@@ -297,11 +297,16 @@ begin
   ), '[]'::json);
 end $$;
 
-create or replace function public.plan_add(p_card uuid, p_service text default null)
+create or replace function public.plan_add(p_card uuid, p_service text default null, p_day date default null)
 returns void language plpgsql security definer set search_path = public as $$
+declare d date := coalesce(p_day, public.today_pl());
 begin
   perform public.staff_check();
-  insert into public.day_plan (card_id, service) values (p_card, nullif(trim(coalesce(p_service, '')), ''));
+  if d < public.today_pl() or d > public.today_pl() + 1 then raise exception 'Plan można ułożyć na dziś albo na jutro.'; end if;
+  if exists (select 1 from public.day_plan where card_id = p_card and day = d and status = 'planned') then
+    raise exception 'Ta klientka jest już w planie na ten dzień.';
+  end if;
+  insert into public.day_plan (card_id, service, day) values (p_card, nullif(trim(coalesce(p_service, '')), ''), d);
 end $$;
 
 create or replace function public.plan_set(p_plan_id bigint, p_status text)
@@ -346,7 +351,7 @@ grant execute on function
   public.create_studio_card(text, text, int, int, int), public.update_card(uuid, text, text, int, int, text),
   public.record_visit(uuid, text, text, bigint), public.remove_stamp(uuid), public.start_new_card(uuid),
   public.use_birthday(uuid, text, bigint), public.delete_card(uuid), public.reset_token(uuid),
-  public.plan_list(date), public.plan_add(uuid, text), public.plan_set(bigint, text), public.plan_remove(bigint)
+  public.plan_list(date), public.plan_add(uuid, text, date), public.plan_set(bigint, text), public.plan_remove(bigint)
   to authenticated;
 
 -- ============================================================

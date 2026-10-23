@@ -198,6 +198,7 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .tabs button { min-height: 46px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .tabs button[aria-selected="true"] { background: var(--gold); color: var(--on-gold); }
+.tabs--small button { min-height: 38px; font-size: 11.5px; }
 
 /* Sprzedaż vouchera */
 .picks { display: flex; flex-direction: column; gap: 8px; }

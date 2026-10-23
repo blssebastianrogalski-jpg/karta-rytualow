@@ -12,6 +12,11 @@
       const get = (t) => +parts.find((p) => p.type === t).value;
       return { y: get('year'), m: get('month'), d: get('day') };
     },
+    // dzień w Polsce jako 'RRRR-MM-DD' (0 = dziś, 1 = jutro)
+    dayPL(offset) {
+      const t = Rules.todayPL();
+      return new Date(Date.UTC(t.y, t.m - 1, t.d + (offset || 0))).toISOString().slice(0, 10);
+    },
     isLeap(y) { return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; },
     isBdayToday(day, month) {
       if (!day || !month) return false;
@@ -79,7 +84,7 @@
         ]
       };
       db.cards[0].email = 'anna.kowalska@example.com';
-      const day = t.y + '-' + t.m + '-' + t.d;
+      const day = Rules.dayPL(0);
       db.plan = [
         { id: 1, card_id: db.cards[3].id, day, service: 'Masaż gorącą świecą', status: 'planned' },
         { id: 2, card_id: db.cards[1].id, day, service: 'Head SPA Premium', status: 'planned' },
@@ -196,22 +201,22 @@
         c.visits.unshift({ kind: 'birthday', service: service || null, discount: 20, created_at: new Date().toISOString() });
         if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = 'birthday'; }
       }); }),
-      planList: () => run(() => {
+      planList: (day) => run(() => {
         guard();
         const db = load();
-        const t = Rules.todayPL();
-        const day = t.y + '-' + t.m + '-' + t.d;
+        day = day || Rules.dayPL(0);
         return (db.plan || []).filter((p) => p.day === day).map((p) => {
           const c = db.cards.find((x) => x.id === p.card_id);
           return c ? { ...p, name: c.name, stamps: c.stamps, source: c.source, phone: c.phone, bday_today: Rules.isBdayToday(c.bday_day, c.bday_month), birthday_used_year: c.birthday_used_year } : null;
         }).filter(Boolean);
       }),
-      planAdd: (cardId, service) => run(() => {
+      planAdd: (cardId, service, day) => run(() => {
         guard();
         const db = load();
-        const t = Rules.todayPL();
+        day = day || Rules.dayPL(0);
         db.plan = db.plan || [];
-        db.plan.push({ id: Date.now(), card_id: cardId, day: t.y + '-' + t.m + '-' + t.d, service: service || null, status: 'planned' });
+        if (db.plan.some((p) => p.card_id === cardId && p.day === day && p.status === 'planned')) throw new Error('Ta klientka jest już w planie na ten dzień.');
+        db.plan.push({ id: Date.now(), card_id: cardId, day, service: service || null, status: 'planned' });
         save(db);
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
@@ -323,8 +328,8 @@
       removeStamp: (id) => rpc('remove_stamp', { p_id: id }),
       startNewCard: (id) => rpc('start_new_card', { p_id: id }),
       useBirthday: (id, service, planId) => rpc('use_birthday', { p_id: id, p_service: service || null, p_plan_id: planId || null }),
-      planList: () => rpc('plan_list', {}),
-      planAdd: (cardId, service) => rpc('plan_add', { p_card: cardId, p_service: service || null }),
+      planList: (day) => rpc('plan_list', day ? { p_day: day } : {}),
+      planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
       deleteCard: (id) => rpc('delete_card', { p_id: id }),

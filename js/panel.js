@@ -11,6 +11,9 @@
   let currentPlan = null;  // pozycja planu dnia, z której otwarto kartę
   let lastService = '';
   let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera
+  let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro
+  const DAY_NAME = ['dziś', 'jutro'];
+  const dayLabel = (o) => new Date(Rules.dayPL(o) + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
 
   if (Api.demo) $('#demoBar').hidden = false;
   UI.registerSW();
@@ -87,9 +90,13 @@
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="bdays"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
-        <div class="row"><span class="eyebrow">Plan dnia · ${new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
+        <div class="row"><span class="eyebrow" id="planTitle">Plan dnia · ${dayLabel(planDay)}</span></div>
+        <div class="tabs tabs--small" role="tablist" aria-label="Dzień planu">
+          <button role="tab" data-plan-day="0" aria-selected="${planDay === 0}">Dziś</button>
+          <button role="tab" data-plan-day="1" aria-selected="${planDay === 1}">Jutro</button>
+        </div>
         <div id="plan"><div class="spinner"></div></div>
-        <p class="small" style="margin:0">Booksy nie udostępnia swojego kalendarza innym aplikacjom, więc rano dodaj klientki do planu (przycisk „+” przy nazwisku albo „Dodaj do planu dnia” na karcie).</p>
+        <p class="small" style="margin:0">Dodaj klientki do planu na dziś albo wieczorem na jutro: przycisk „+” przy nazwisku dodaje do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <label class="eyebrow" for="search">Klientki</label>
@@ -99,6 +106,12 @@
     bindTabs();
     $('#scanBtn').addEventListener('click', openScanner);
     $('#newBtn').addEventListener('click', () => openNewCard());
+    document.querySelectorAll('[data-plan-day]').forEach((b) => b.addEventListener('click', () => {
+      planDay = +b.dataset.planDay;
+      document.querySelectorAll('[data-plan-day]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+      $('#planTitle').textContent = 'Plan dnia · ' + dayLabel(planDay);
+      loadPlan(); loadList();
+    }));
     const opb = $('#ownerPushBtn');
     if (opb) opb.addEventListener('click', enableOwnerPush);
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
@@ -128,25 +141,27 @@
     const box = $('#plan');
     if (!box) return;
     let plan;
-    try { plan = await Api.planList(); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
-    if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">Na dziś nikogo jeszcze nie dodano.</span></div>'; return; }
+    const day = planDay;
+    try { plan = await Api.planList(Rules.dayPL(day)); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
+    if (day !== planDay) return; // w międzyczasie wybrano inny dzień
+    if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
     box.innerHTML = '<div class="panel panel--tight">' + plan.map((p) => {
       const done = p.status !== 'planned';
       return `<div class="client">
-        <button class="client__main" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" style="${done ? 'opacity:.6' : ''}">
+        <button class="client__main" data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}" style="${done ? 'opacity:.6' : ''}">
           <span class="avatar" style="${done ? 'background:var(--gold);color:var(--on-gold);border-color:var(--gold)' : ''}">${done ? '✓' : esc(UI.initials(p.name))}</span>
-          <span><span class="client__name">${esc(p.name)}${p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : ''}</span>
+          <span><span class="client__name">${esc(p.name)}${!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : ''}</span>
           <span class="client__meta">${esc(p.service || 'rytuał')} · ${done ? esc(MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? ' · teraz −15%' : p.stamps === 9 ? ' · teraz −30%' : '')}</span></span>
         </button>
-        ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button><button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}
+        ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
       </div>`;
-    }).join('') + '</div>' + (todo ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
+    }).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
       const p = plan.find((x) => String(x.id) === b.dataset.planDel);
-      if (!(await UI.ask('Usunąć ' + p.name + ' z dzisiejszego planu? Karta i pieczątki zostaną bez zmian.', 'Usuń z planu'))) return;
+      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + DAY_NAME[day] + '? Karta i pieczątki zostaną bez zmian.', 'Usuń z planu'))) return;
       try { await Api.planRemove(p.id); toast('Usunięto z planu dnia.'); loadPlan(); } catch (e) { fail(e); }
     }));
   }
@@ -171,12 +186,12 @@
           <span class="avatar">${esc(UI.initials(c.name))}</span>
           <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${c.stamps} / 10 pieczątek${esc(tag)}</span></span>
         </button>
-        <button class="plus" data-plan-add="${esc(c.id)}" aria-label="Dodaj ${esc(c.name)} do planu dnia">+</button>
+        <button class="plus" data-plan-add="${esc(c.id)}" aria-label="Dodaj ${esc(c.name)} do planu na ${DAY_NAME[planDay]}">+</button>
       </div>`;
     }).join('');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
     box.querySelectorAll('[data-plan-add]').forEach((b) => b.addEventListener('click', async () => {
-      try { await Api.planAdd(b.dataset.planAdd); toast('Dodano do planu dnia.'); loadPlan(); } catch (e) { fail(e); }
+      try { await Api.planAdd(b.dataset.planAdd, null, Rules.dayPL(planDay)); toast('Dodano do planu na ' + DAY_NAME[planDay] + '.'); loadPlan(); } catch (e) { fail(e); }
     }));
   }
 
@@ -242,7 +257,10 @@
         <button class="btn btn--ghost" data-mode="package_visit">Wizyta z pakietu · bez pieczątki</button>
         ${c.stamps > 0 ? '<button class="linkbtn" id="undoBtn" style="align-self:center">Cofnij ostatnią pieczątkę</button>' : ''}
       </section>
-      ${currentPlan ? '' : '<button class="btn btn--ghost" id="planBtn">+ Dodaj do planu dnia</button>'}
+      <div class="btn-row">
+        ${currentPlan ? '' : '<button class="btn btn--ghost" data-plan-btn="0">+ Plan dziś</button>'}
+        <button class="btn btn--ghost" data-plan-btn="1">+ Plan jutro</button>
+      </div>
       <section class="panel">
         <span class="eyebrow">Karta w telefonie klientki</span>
         <p class="small" style="margin:0">${c.source === 'studio' ? 'Klientka nie ma jeszcze aplikacji. Wyślij jej SMS z linkiem: gdy go otworzy, karta połączy się z aplikacją razem ze wszystkimi pieczątkami.' : 'Link przyda się, gdy klientka zmieni telefon albo usunie aplikację.'}</p>
@@ -279,7 +297,10 @@
     on('#bdayBtn', async () => {
       try { current = await Api.useBirthday(c.id, svc(), currentPlan); currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); } catch (e) { fail(e); }
     });
-    on('#planBtn', async () => { try { await Api.planAdd(c.id, svc()); toast('Dodano do planu dnia.'); } catch (e) { fail(e); } });
+    document.querySelectorAll('[data-plan-btn]').forEach((b) => b.addEventListener('click', async () => {
+      const o = +b.dataset.planBtn;
+      try { await Api.planAdd(c.id, svc(), Rules.dayPL(o)); toast('Dodano do planu na ' + DAY_NAME[o] + '.'); } catch (e) { fail(e); }
+    }));
     on('#editBtn', () => openEdit());
     on('#delBtn', async () => {
       if (!(await UI.ask('Usunąć kartę: ' + c.name + '? Tego nie da się cofnąć.', 'Usuń'))) return;
