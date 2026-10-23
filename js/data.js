@@ -218,6 +218,10 @@
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
       resetToken: (id) => run(() => { guard(); return mutate(id, (c) => { c.token = rnd(36, '0123456789abcdef'); }); }),
+      transferStamps: (id, n) => run(() => { guard(); return mutate(id, (c) => {
+        if (c.cards_completed || (c.visits || []).length) throw new Error('Pieczątki z papierowej karty można przenieść tylko przed pierwszą wizytą zapisaną w aplikacji.');
+        c.stamps = Math.max(0, Math.min(9, n || 0));
+      }); }),
       // sprzedaż vouchera (pokaz: bez sklepu i bez drukarki)
       vouchersList: () => run(() => { guard(); return DEMO_VOUCHERS.map((v) => ({ ...v, stamps: stampsFor(v.name) })); }),
       sellVoucher: (p) => run(() => {
@@ -325,6 +329,7 @@
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
       deleteCard: (id) => rpc('delete_card', { p_id: id }),
       resetToken: (id) => rpc('reset_token', { p_id: id }),
+      transferStamps: (id, n) => rpc('transfer_paper_stamps', { p_id: id, p_stamps: n }),
       // sprzedaż vouchera: przez funkcję sprzedaz-vouchera (sekret sklepu zostaje na serwerze)
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),

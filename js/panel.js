@@ -331,6 +331,9 @@
   }
 
   // ---------- edycja / nowa karta ----------
+  // Pieczątki z papierowej karty można ustawić przy nowej karcie albo na karcie bez żadnej wizyty w aplikacji.
+  const canTransfer = (c) => !c.cards_completed && !(c.visits || []).length;
+  const stampsField = (n) => `<div class="field"><label for="fStamps">Pieczątki przeniesione z papierowej karty</label><select class="input" id="fStamps">${Array.from({ length: 10 }, (_, i) => `<option value="${i}"${i === n ? ' selected' : ''}>${i}</option>`).join('')}</select></div>`;
   function cardForm(c, isNew) {
     return `
       <form class="panel" id="cardForm" novalidate>
@@ -340,7 +343,7 @@
         <div class="field"><label for="fEmail">E-mail (opcjonalnie, do voucherów i e-paragonów)</label><input class="input" id="fEmail" type="email" inputmode="email" value="${esc(c.email || '')}" placeholder="np. anna@example.com" autocomplete="off"></div>
         <div class="field"><span class="label" id="fBdayL">Data urodzin (do rabatu −20%)</span>
           <div class="split" role="group" aria-labelledby="fBdayL"><select class="input" id="fDay" aria-label="Dzień">${UI.dayOptions(c.bday_day)}</select><select class="input" id="fMonth" aria-label="Miesiąc">${UI.monthOptions(c.bday_month)}</select></div></div>
-        ${isNew ? `<div class="field"><label for="fStamps">Pieczątki przeniesione z papierowej karty</label><select class="input" id="fStamps">${Array.from({ length: 10 }, (_, i) => `<option value="${i}">${i}</option>`).join('')}</select></div>` : `<div class="field"><label for="fNote">Notatka (widzi tylko studio)</label><textarea class="input" id="fNote">${esc(c.note || '')}</textarea></div>`}
+        ${isNew ? stampsField(0) : (canTransfer(c) ? stampsField(c.stamps || 0) : '') + `<div class="field"><label for="fNote">Notatka (widzi tylko studio)</label><textarea class="input" id="fNote">${esc(c.note || '')}</textarea></div>`}
         <p class="error" id="fErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit">${isNew ? 'Załóż kartę' : 'Zapisz zmiany'}</button>
       </form>`;
@@ -380,6 +383,8 @@
         const f = readForm();
         f.note = $('#fNote').value.trim();
         current = await Api.updateCard(c.id, f);
+        const st = $('#fStamps');
+        if (st && +st.value !== (c.stamps || 0)) current = await Api.transferStamps(c.id, +st.value);
         toast('Zapisano zmiany.');
         renderCard();
       } catch (ex) { const el = $('#fErr'); el.textContent = ex.message; el.hidden = false; }
