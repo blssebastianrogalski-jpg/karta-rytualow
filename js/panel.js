@@ -23,7 +23,7 @@
     planned: 'Zaplanowana'
   };
   const fail = (e) => toast(e.message || 'Coś poszło nie tak.', 'error');
-  const appUrl = () => new URL('./', location.href).href;
+  const appUrl = () => CFG.APP_URL || new URL('./', location.href).href;
   const linkFor = (c) => appUrl() + '?k=' + encodeURIComponent(c.token);
 
   // ---------- logowanie ----------
