@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
 
   const title = "Dodano pieczątkę";
   const body = stamps >= 10
-    ? "Karta pełna (10/10). Dziękujemy za wizyty!"
+    ? "Karta pełna (10/10). Dziękuję za wizyty!"
     : stamps === 5
       ? "Masz 5/10 pieczątek. Piąty rytuał z rabatem −15%."
       : `Masz ${stamps}/10 pieczątek.`;

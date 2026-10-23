@@ -141,7 +141,7 @@
     const visits = (card.visits || []).slice(0, 5);
     const lastVisit = visits[0];
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
-    const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla nas bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
+    const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
       ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span></button>' : ''}

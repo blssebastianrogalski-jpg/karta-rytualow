@@ -38,7 +38,7 @@
 
   // Tekst zachęty pod kartą (dla klientki)
   function progressText(stamps) {
-    if (stamps >= 10) return { head: 'Karta pełna. Dziękuję!', sub: 'Przy następnej wizycie rozpoczniemy nową kartę rytuałów.' };
+    if (stamps >= 10) return { head: 'Karta pełna. Dziękuję!', sub: 'Przy następnej wizycie założę Ci nową kartę rytuałów.' };
     if (stamps === 4) return { head: 'Twój następny rytuał: −15%', sub: 'To będzie Twoja 5. wizyta. Rabat naliczę przy płatności.' };
     if (stamps === 9) return { head: 'Twój następny rytuał: −30%', sub: 'To będzie Twoja 10. wizyta. Rabat naliczę przy płatności.' };
     if (stamps < 4) { const n = 4 - stamps; return { head: 'Jeszcze ' + n + ' ' + plural(n, 'wizyta', 'wizyty', 'wizyt') + ' do rabatu −15%', sub: stamps === 0 ? 'Każdy rytuał to jedna pieczątka. Przy 5. wizycie −15%, przy 10. aż −30%.' : 'A przy 10. rytuale czeka na Ciebie −30%.' }; }
