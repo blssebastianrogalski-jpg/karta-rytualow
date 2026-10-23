@@ -34,6 +34,24 @@
     }
   };
 
+  // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
+  // Ta sama reguła jest w funkcji sprzedaz-vouchera (tam decyduje ostatecznie).
+  function stampsFor(name) {
+    const n = String(name).toLowerCase();
+    if (!n.includes('kobido') || !/\d+\s*wizyt/.test(n)) return 0;
+    if (n.includes('transformacja')) return 2;
+    if (n.includes('start') || n.includes('rytuał') || n.includes('rytual')) return 1;
+    return 0;
+  }
+  const DEMO_VOUCHERS = [
+    { id: 101, name: 'Kobido START — 3 wizyty', price: 540 },
+    { id: 102, name: 'Kobido RYTUAŁ — 5 wizyt', price: 800 },
+    { id: 103, name: 'Kobido TRANSFORMACJA — 10 wizyt', price: 1500 },
+    { id: 104, name: 'Voucher Head SPA Premium', price: 250 },
+    { id: 105, name: 'Voucher kwotowy 100 zł', price: 100 },
+    { id: 106, name: 'Voucher kwotowy 200 zł', price: 200 }
+  ];
+
   // ---------- TRYB DEMO ----------
   function demoApi() {
     const KEY = 'tctd.demoDb';
@@ -199,6 +217,41 @@
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
       resetToken: (id) => run(() => { guard(); return mutate(id, (c) => { c.token = rnd(36, '0123456789abcdef'); }); }),
+      // sprzedaż vouchera (pokaz: bez sklepu i bez drukarki)
+      vouchersList: () => run(() => { guard(); return DEMO_VOUCHERS.map((v) => ({ ...v, stamps: stampsFor(v.name) })); }),
+      sellVoucher: (p) => run(() => {
+        guard();
+        const v = DEMO_VOUCHERS.find((x) => x.id === p.product_id);
+        if (!v) throw new Error('Wybierz voucher.');
+        const db = load();
+        db.sales = db.sales || [];
+        const orderId = 1000 + db.sales.length + 1;
+        const expected = p.card_id ? stampsFor(v.name) * p.qty : 0;
+        let added = 0, stampError = null, card = null;
+        const c = p.card_id ? db.cards.find((x) => x.id === p.card_id) : null;
+        for (let i = 0; i < expected && c; i++) {
+          if (c.stamps >= 10) { stampError = 'Karta jest pełna. Rozpocznij nową kartę.'; break; }
+          c.stamps += 1;
+          c.visits.unshift({ kind: 'package_buy', service: v.name, discount: Rules.discountFor(c.stamps), created_at: new Date().toISOString() });
+          added++;
+        }
+        if (c) card = view(c);
+        db.sales.unshift({ id: orderId, created_at: new Date().toISOString(), card_id: p.card_id || null, product_name: v.name, qty: p.qty, total: v.price * p.qty,
+          payment: p.payment, buyer_name: p.name || null, order_id: orderId, order_number: String(orderId), receipt: 'queued', stamps_added: added });
+        save(db);
+        return { order_id: orderId, order_number: String(orderId), total: v.price * p.qty, stamps_expected: expected, stamps_added: added, stamp_error: stampError, card };
+      }),
+      receiptStatus: (orderId) => run(() => {
+        guard();
+        const db = load();
+        const s = (db.sales || []).find((x) => x.order_id === orderId);
+        if (!s) throw new Error('Nie znaleziono zamówienia.');
+        const age = (Date.now() - new Date(s.created_at)) / 1000;
+        s.receipt = age > 7 ? 'confirmed' : age > 3 ? 'sent' : 'queued';
+        save(db);
+        return { order_number: s.order_number, total: s.total, receipt: s.receipt };
+      }),
+      voucherSales: () => run(() => { guard(); return (load().sales || []).slice(0, 20); }),
       resetDemo: () => { try { localStorage.removeItem(KEY); localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
     };
   }
@@ -214,6 +267,16 @@
         const msg = error.message || '';
         if (/fetch|network/i.test(msg)) throw new Error('Brak połączenia z internetem. Spróbuj ponownie.');
         throw new Error(msg.replace(/^.*?:\s*/, '') || 'Coś poszło nie tak.');
+      }
+      return data;
+    };
+    const sale = async (body) => {
+      const { data, error } = await sb.functions.invoke('sprzedaz-vouchera', { body });
+      if (error) {
+        let msg = error.message;
+        try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (e) { /* bez treści */ }
+        if (/fetch|network/i.test(msg)) msg = 'Brak połączenia z internetem. Spróbuj ponownie.';
+        throw new Error(msg);
       }
       return data;
     };
@@ -254,7 +317,16 @@
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
       deleteCard: (id) => rpc('delete_card', { p_id: id }),
-      resetToken: (id) => rpc('reset_token', { p_id: id })
+      resetToken: (id) => rpc('reset_token', { p_id: id }),
+      // sprzedaż vouchera: przez funkcję sprzedaz-vouchera (sekret sklepu zostaje na serwerze)
+      vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
+      sellVoucher: (p) => sale({ action: 'sell', ...p }),
+      receiptStatus: (orderId) => sale({ action: 'status', order_id: orderId }),
+      voucherSales: async () => {
+        const { data, error } = await sb.from('voucher_sales').select('*').order('created_at', { ascending: false }).limit(20);
+        if (error) throw new Error(error.message);
+        return data;
+      }
     };
   }
 

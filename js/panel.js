@@ -1,4 +1,4 @@
-// Panel studia: logowanie, plan dnia, skaner, pieczątki, karty bez aplikacji.
+// Panel studia: logowanie, plan dnia, skaner, pieczątki, karty bez aplikacji, sprzedaż voucherów.
 (function () {
   const CFG = window.APP_CONFIG;
   const { esc, $, toast } = UI;
@@ -10,6 +10,7 @@
   let current = null;      // otwarta karta
   let currentPlan = null;  // pozycja planu dnia, z której otwarto kartę
   let lastService = '';
+  let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera
 
   if (Api.demo) $('#demoBar').hidden = false;
   UI.registerSW();
@@ -58,8 +59,24 @@
   $('#logoutBtn').addEventListener('click', async () => { await Api.logout(); start(); });
 
   // ---------- ekran główny ----------
+  function tabsHtml() {
+    return `<div class="tabs" role="tablist" aria-label="Sekcje panelu">
+      <button role="tab" data-tab="home" aria-selected="${tab === 'home'}">Klientki</button>
+      <button role="tab" data-tab="sale" aria-selected="${tab === 'sale'}">Sprzedaż vouchera</button>
+    </div>`;
+  }
+  function bindTabs() {
+    main.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.tab === tab) return;
+      tab = b.dataset.tab;
+      renderHome();
+    }));
+  }
+
   async function renderHome() {
+    if (tab === 'sale') return renderSale();
     main.innerHTML = `
+      ${tabsHtml()}
       <h1>Panel studia</h1>
       <button class="btn btn--gold" id="scanBtn" style="min-height:58px">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M4 12h16"/></svg>
@@ -78,6 +95,7 @@
         <input class="input" id="search" type="search" placeholder="Szukaj po imieniu, nazwisku lub telefonie" value="${esc(query)}" style="background:var(--surface)">
         <div class="panel panel--tight" id="list"><div class="spinner"></div></div>
       </section>`;
+    bindTabs();
     $('#scanBtn').addEventListener('click', openScanner);
     $('#newBtn').addEventListener('click', () => openNewCard());
     const opb = $('#ownerPushBtn');
@@ -168,7 +186,7 @@
     sheet.hidden = true;
     document.body.style.overflow = '';
     current = null; currentPlan = null;
-    loadPlan(); loadList();
+    if (tab === 'home') { loadPlan(); loadList(); }
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
   const bar = (title) => `<div class="sheet__bar"><button class="back" data-close>‹ Wróć</button></div><h1 id="sheetTitle">${esc(title)}</h1>`;
@@ -362,6 +380,262 @@
         renderCard();
       } catch (ex) { const el = $('#fErr'); el.textContent = ex.message; el.hidden = false; }
     });
+  }
+
+  // ---------- sprzedaż vouchera ----------
+  // Panel tworzy opłacone zamówienie w sklepie (przez funkcję sprzedaz-vouchera),
+  // a sklep sam drukuje paragon i wysyła voucher e-mailem.
+  const PAY = [['gotowka', 'Gotówka'], ['karta', 'Karta'], ['blik', 'BLIK']];
+  const RECEIPT = {
+    pending: 'w trakcie',
+    queued: 'paragon w kolejce',
+    sent: 'paragon wysłany do drukarki',
+    confirmed: 'paragon wydrukowany ✅',
+    error: 'błąd paragonu',
+    failed: 'sprzedaż nieudana'
+  };
+  const zl = (n) => Number(n || 0).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' zł';
+  const stampWord = (n) => n + ' ' + UI.plural(n, 'pieczątka', 'pieczątki', 'pieczątek');
+  const newSale = () => ({ productId: null, qty: 1, payment: null, card: null, name: '', email: '', phone: '' });
+  let vouchers = null;
+  let sale = newSale();
+  let pollRun = 0;
+
+  async function renderSale() {
+    main.innerHTML = `
+      ${tabsHtml()}
+      <h1>Sprzedaż vouchera</h1>
+      <div id="saleResult"></div>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <div class="row"><span class="eyebrow">1 · Voucher</span><button class="linkbtn" id="vReload" style="min-height:0;padding:0">Odśwież ceny</button></div>
+        <div id="vList"><div class="spinner"></div></div>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">2 · Ilość</span>
+        <div class="stepper">
+          <button type="button" id="qMinus" aria-label="Mniej">−</button>
+          <output id="qVal" aria-live="polite">1</output>
+          <button type="button" id="qPlus" aria-label="Więcej">+</button>
+        </div>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">3 · Płatność</span>
+        <div class="pay" role="radiogroup" aria-label="Sposób płatności">
+          ${PAY.map(([k, l]) => `<button type="button" role="radio" data-pay="${k}" aria-checked="false">${l}</button>`).join('')}
+        </div>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">4 · Dane do zamówienia</span>
+        <div class="panel" style="gap:12px">
+          <div id="cardPick"></div>
+          <div class="field"><label for="sName">Imię i nazwisko</label><input class="input" id="sName" autocomplete="off"></div>
+          <div class="field"><label for="sEmail">E-mail (na niego przyjdzie voucher PDF i e-paragon)</label><input class="input" id="sEmail" type="email" inputmode="email" autocomplete="off"></div>
+          <div class="field"><label for="sPhone">Telefon</label><input class="input" id="sPhone" type="tel" autocomplete="off"></div>
+          <p class="small" style="margin:0">Wszystkie pola są opcjonalne. Bez e-maila voucher PDF nie przyjdzie pocztą.</p>
+        </div>
+      </section>
+      <section class="panel panel--gold" style="gap:12px">
+        <div class="row"><span class="eyebrow eyebrow--gold">Do zapłaty</span><span class="strong gold" id="sTotal" style="font-size:22px">—</span></div>
+        <div class="small" id="sStampInfo" hidden></div>
+        <p class="error" id="sErr" role="alert" hidden></p>
+        <button class="btn btn--gold" id="sellBtn" style="min-height:58px">Sprzedaj i wystaw paragon</button>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <div class="row"><span class="eyebrow">Ostatnie sprzedaże</span><button class="linkbtn" id="hReload" style="min-height:0;padding:0">Odśwież</button></div>
+        <div class="panel panel--tight" id="sHistory"><div class="spinner"></div></div>
+      </section>`;
+    bindTabs();
+    $('#vReload').addEventListener('click', () => { vouchers = null; loadVouchers(); });
+    $('#hReload').addEventListener('click', loadHistory);
+    $('#qMinus').addEventListener('click', () => { sale.qty = Math.max(1, sale.qty - 1); updateSale(); });
+    $('#qPlus').addEventListener('click', () => { sale.qty = Math.min(10, sale.qty + 1); updateSale(); });
+    main.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => { sale.payment = b.dataset.pay; updateSale(); }));
+    [['#sName', 'name'], ['#sEmail', 'email'], ['#sPhone', 'phone']].forEach(([sel, key]) => {
+      const el = $(sel);
+      el.value = sale[key];
+      el.addEventListener('input', () => { sale[key] = el.value; });
+    });
+    $('#sellBtn').addEventListener('click', sell);
+    renderCardPick();
+    updateSale();
+    loadVouchers();
+    loadHistory();
+  }
+
+  async function loadVouchers() {
+    const box = $('#vList');
+    if (!box) return;
+    if (!vouchers) {
+      box.innerHTML = '<div class="spinner"></div>';
+      try { vouchers = await Api.vouchersList(); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
+    }
+    if (!vouchers.length) { box.innerHTML = '<p class="small">Sklep nie zwrócił żadnych voucherów.</p>'; return; }
+    if (sale.productId && !vouchers.some((v) => v.id === sale.productId)) sale.productId = null;
+    box.innerHTML = '<div class="picks" role="radiogroup" aria-label="Voucher">' + vouchers.map((v) => `
+      <button type="button" class="pick" role="radio" data-v="${v.id}" aria-checked="false">
+        <span><span class="pick__name">${esc(v.name)}</span>${v.stamps ? `<span class="pick__meta">pakiet · ${stampWord(v.stamps)} na karcie</span>` : ''}</span>
+        <span class="pick__price">${zl(v.price)}</span>
+      </button>`).join('') + '</div>';
+    box.querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => { sale.productId = +b.dataset.v; updateSale(); }));
+    updateSale();
+  }
+
+  function selected() { return (vouchers || []).find((v) => v.id === sale.productId) || null; }
+
+  function updateSale() {
+    const v = selected();
+    main.querySelectorAll('[data-v]').forEach((b) => b.setAttribute('aria-checked', String(+b.dataset.v === sale.productId)));
+    main.querySelectorAll('[data-pay]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.pay === sale.payment)));
+    const q = $('#qVal'); if (q) q.textContent = sale.qty;
+    const t = $('#sTotal'); if (t) t.textContent = v ? zl(v.price * sale.qty) : '—';
+    const info = $('#sStampInfo');
+    if (info) {
+      const n = v ? v.stamps * sale.qty : 0;
+      info.hidden = !v;
+      info.innerHTML = !v ? '' : !n ? 'Ten voucher nie daje pieczątki przy zakupie. Pieczątka przysługuje przy wizycie.'
+        : sale.card ? `Po sprzedaży na kartę ${esc(sale.card.name)} trafi <b class="gold">+${stampWord(n)}</b> (zakup pakietu).`
+          : `Pakiet daje ${stampWord(n)}. Wybierz kartę lojalnościową, żeby dodały się same.`;
+    }
+  }
+
+  function renderCardPick() {
+    const box = $('#cardPick');
+    if (!box) return;
+    if (sale.card) {
+      box.innerHTML = `<div class="row" style="align-items:center">
+        <span><span class="eyebrow eyebrow--gold">Karta lojalnościowa</span><br><span class="strong">${esc(sale.card.name)}</span> <span class="small">· ${sale.card.stamps}/10 · karta ${esc(sale.card.code)}</span></span>
+        <button class="linkbtn" id="cardUnpick" style="min-height:0;padding:0">Odłącz</button></div>`;
+      $('#cardUnpick').addEventListener('click', () => { sale.card = null; renderCardPick(); updateSale(); });
+      return;
+    }
+    box.innerHTML = `<div class="field"><label for="cSearch">Karta lojalnościowa (szukaj po telefonie lub nazwisku)</label>
+      <input class="input" id="cSearch" type="search" autocomplete="off" placeholder="np. 600 100 200 albo Kowalska"></div>
+      <div id="cResults"></div>`;
+    let timer;
+    $('#cSearch').addEventListener('input', (e) => {
+      clearTimeout(timer);
+      const q = e.target.value.trim();
+      timer = setTimeout(async () => {
+        const res = $('#cResults');
+        if (!res) return;
+        if (q.length < 2) { res.innerHTML = ''; return; }
+        let list;
+        try { list = await Api.listCards(q); } catch (ex) { res.innerHTML = '<p class="error">' + esc(ex.message) + '</p>'; return; }
+        res.innerHTML = list.length ? '<div class="panel panel--tight" style="background:var(--bg)">' + list.slice(0, 6).map((c) => `
+          <div class="client"><button class="client__main" data-card="${esc(c.id)}">
+            <span class="avatar">${esc(UI.initials(c.name))}</span>
+            <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${esc(c.phone || 'bez telefonu')} · ${c.stamps}/10</span></span>
+          </button></div>`).join('') + '</div>' : '<p class="small" style="margin:0">Brak kart dla tego wyszukiwania.</p>';
+        res.querySelectorAll('[data-card]').forEach((b) => b.addEventListener('click', () => {
+          const c = list.find((x) => x.id === b.dataset.card);
+          sale.card = c;
+          sale.name = c.name;
+          if (c.phone) sale.phone = c.phone;
+          $('#sName').value = sale.name;
+          $('#sPhone').value = sale.phone;
+          renderCardPick();
+          updateSale();
+        }));
+      }, 250);
+    });
+  }
+
+  async function sell() {
+    const v = selected();
+    const err = $('#sErr');
+    err.hidden = true;
+    const problem = !v ? 'Wybierz voucher.' : !sale.payment ? 'Wybierz sposób płatności.'
+      : sale.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sale.email.trim()) ? 'Sprawdź adres e-mail.' : '';
+    if (problem) { err.textContent = problem; err.hidden = false; return; }
+    const total = v.price * sale.qty;
+    const payLabel = PAY.find((p) => p[0] === sale.payment)[1];
+    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(total)}? ${v.name} × ${sale.qty}, płatność: ${payLabel}.`, 'Wystaw paragon'))) return;
+    const btn = $('#sellBtn');
+    btn.disabled = true;
+    btn.textContent = 'Wysyłam do sklepu…';
+    try {
+      const r = await Api.sellVoucher({
+        client_ref: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+        product_id: v.id, qty: sale.qty, payment: sale.payment,
+        name: sale.name.trim() || undefined, email: sale.email.trim() || undefined, phone: sale.phone.trim() || undefined,
+        card_id: sale.card ? sale.card.id : undefined
+      });
+      if (r.duplicate) throw new Error('Ta sprzedaż została już wysłana. Sprawdź listę ostatnich sprzedaży.');
+      if (r.card && r.stamps_added) Api.notifyStamp(r.card.id, r.card.stamps).catch(() => {});
+      sale = newSale();
+      renderSale();
+      showResult(r, v.name);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Sprzedaj i wystaw paragon';
+      err.textContent = e.message;
+      err.hidden = false;
+    }
+  }
+
+  function showResult(r, productName) {
+    const box = $('#saleResult');
+    if (!box) return;
+    const stamps = r.stamps_added ? `<span class="small gold">Dodano ${stampWord(r.stamps_added)} na kartę (zakup pakietu).</span>` : '';
+    const stampErr = r.stamp_error ? `<span class="error" style="font-size:13px">Pieczątki: ${esc(r.stamp_error)} Dodano ${r.stamps_added} z ${r.stamps_expected}.</span>` : '';
+    box.innerHTML = `<section class="panel panel--gold" style="gap:10px">
+      <span class="eyebrow eyebrow--gold">Sprzedano · ${esc(productName)}</span>
+      <span class="strong" style="font-size:17px">Zamówienie nr ${esc(r.order_number)} · ${zl(r.total)}</span>
+      <div class="hint" id="rStatus" role="status">Paragon w kolejce…</div>
+      ${stamps}${stampErr}
+      <button class="btn btn--ghost btn--sm" id="rCheck" hidden>Sprawdź ponownie</button>
+    </section>`;
+    $('#rCheck').addEventListener('click', () => pollReceipt(r.order_id));
+    pollReceipt(r.order_id);
+  }
+
+  // Odpytuje status paragonu co 3 s, najdłużej 60 s.
+  async function pollReceipt(orderId) {
+    const run = ++pollRun;
+    const started = Date.now();
+    const out = $('#rStatus');
+    const again = $('#rCheck');
+    if (again) again.hidden = true;
+    const set = (text, kind) => { const el = $('#rStatus'); if (el) { el.textContent = text; el.className = 'hint' + (kind ? ' hint--' + kind : ''); } };
+    if (out) set('Paragon w kolejce…');
+    while (run === pollRun && tab === 'sale') {
+      let s = null;
+      try { s = await Api.receiptStatus(orderId); } catch (e) { /* spróbujemy jeszcze raz */ }
+      if (run !== pollRun) return;
+      if (s && s.receipt === 'confirmed') { set('Paragon wydrukowany ✅', 'reward'); loadHistory(); return; }
+      if (s && s.receipt === 'error') { set('Błąd paragonu. Sprawdź program eDPS i zamówienie w WooCommerce.', 'error'); loadHistory(); break; }
+      if (Date.now() - started >= 60000) { set('Paragon czeka – sprawdź, czy komputer z eDPS jest włączony.', 'error'); loadHistory(); break; }
+      if (s && s.receipt === 'sent') set('Paragon wysłany do drukarki…');
+      await new Promise((res) => setTimeout(res, 3000));
+    }
+    const b = $('#rCheck');
+    if (b && run === pollRun) b.hidden = false;
+  }
+
+  async function loadHistory() {
+    const box = $('#sHistory');
+    if (!box) return;
+    let list;
+    try { list = await Api.voucherSales(); } catch (e) { box.innerHTML = '<p class="error" style="padding:12px 0">' + esc(e.message) + '</p>'; return; }
+    if (!list.length) { box.innerHTML = '<p class="small" style="padding:12px 0;margin:0">Nie ma jeszcze sprzedaży z panelu.</p>'; return; }
+    box.innerHTML = list.map((s) => {
+      const d = new Date(s.created_at);
+      const when = UI.fmtShort(s.created_at) + ', ' + d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+      const ok = s.receipt === 'confirmed';
+      const bad = s.receipt === 'error' || s.receipt === 'failed';
+      return `<div class="list-row" style="flex-direction:column;gap:4px">
+        <div class="row" style="align-items:baseline"><span>${esc(s.product_name)}${s.qty > 1 ? ' × ' + s.qty : ''}</span><span class="strong" style="color:var(--text)">${zl(s.total)}</span></div>
+        <div class="row" style="align-items:center"><span class="small">${esc(when)}${s.order_number ? ' · nr ' + esc(s.order_number) : ''}${s.stamps_added ? ' · +' + s.stamps_added + ' piecz.' : ''}</span>
+          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}" style="${bad ? 'font-size:13px' : ''}">${esc(RECEIPT[s.receipt] || s.receipt)}${!ok && !bad && s.order_id ? ` <button class="linkbtn" data-check="${s.order_id}" style="min-height:0;padding:0;font-size:13px">sprawdź</button>` : ''}</span></div>
+        ${s.error ? `<span class="error" style="font-size:12.5px">${esc(s.error)}</span>` : ''}
+      </div>`;
+    }).join('');
+    box.querySelectorAll('[data-check]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { const r = await Api.receiptStatus(+b.dataset.check); toast('Zamówienie ' + (r.order_number || b.dataset.check) + ': ' + (RECEIPT[r.receipt] || r.receipt) + '.'); } catch (e) { fail(e); }
+      loadHistory();
+    }));
   }
 
   // ---------- skaner QR ----------

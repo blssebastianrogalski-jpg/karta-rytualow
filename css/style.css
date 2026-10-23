@@ -192,3 +192,23 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 .ask { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .ask__box { background: var(--surface); border: 1px solid var(--gold); border-radius: var(--radius); padding: 20px; width: min(420px, 100%); display: flex; flex-direction: column; gap: 16px; }
 .ask__box p { margin: 0; font-size: 16px; line-height: 1.5; }
+
+/* Panel – zakładki */
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.tabs button { min-height: 46px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.tabs button[aria-selected="true"] { background: var(--gold); color: var(--on-gold); }
+
+/* Sprzedaż vouchera */
+.picks { display: flex; flex-direction: column; gap: 8px; }
+.pick { min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); text-align: left; }
+.pick[aria-checked="true"] { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); background: #231C10; }
+.pick__name { display: block; font-size: 15.5px; font-weight: 500; }
+.pick__meta { display: block; font-size: 12.5px; color: var(--gold); }
+.pick__price { font-weight: 600; white-space: nowrap; color: var(--gold); }
+.stepper { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.stepper button { min-height: 56px; border: none; background: none; color: var(--gold); font-size: 26px; }
+.stepper output { text-align: center; font-size: 22px; font-weight: 600; }
+.pay { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pay button { min-height: 64px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.pay button[aria-checked="true"] { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.hint--error { border-color: #6B3A30; color: var(--danger); }
