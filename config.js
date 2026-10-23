@@ -10,6 +10,7 @@ window.APP_CONFIG = {
   PHONE: '500 694 094',
   ADDRESS: 'ul. Zawierciańska 4/12, 32-310 Klucze',
   INSTAGRAM_URL: 'https://www.instagram.com/jrtwojecialo',
+  FACEBOOK_URL: 'https://fb.com/jrtwojecialo',
   WEBSITE_URL: 'https://twojecialotwojdobrostan.pl',
 
   // Rytuały do wyboru przy dodawaniu pieczątki
