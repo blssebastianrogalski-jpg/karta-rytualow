@@ -409,6 +409,17 @@
   let vouchers = null;
   let sale = newSale();
   let pollRun = 0;
+  // Płatność BLIK w toku. Zapamiętana w telefonie, żeby po powrocie z PayU panel wiedział, co śledzić.
+  const PENDING_KEY = 'tctd.blikPending';
+  const pending = {
+    get() { try { return JSON.parse(localStorage.getItem(PENDING_KEY)); } catch (e) { return null; } },
+    set(v) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(v)); } catch (e) { /* bez zapamiętania */ } },
+    clear() { try { localStorage.removeItem(PENDING_KEY); } catch (e) { /* ignore */ } }
+  };
+  document.addEventListener('visibilitychange', () => {
+    const p = pending.get();
+    if (document.visibilityState === 'visible' && tab === 'sale' && p && $('#rStatus')) pollReceipt(p.order_id, true);
+  });
 
   async function renderSale() {
     main.innerHTML = `
@@ -470,6 +481,8 @@
     updateSale();
     loadVouchers();
     loadHistory();
+    const p = pending.get();
+    if (p && !$('#saleResult').innerHTML) showResult(p, p.product_name);
   }
 
   async function loadVouchers() {
@@ -527,7 +540,7 @@
       $('#transferOk').addEventListener('change', (e) => { sale.transferOk = e.target.checked; });
     } else if (sale.payment === 'blik') {
       box.hidden = false;
-      box.innerHTML = '<span class="small">Otworzy się strona płatności PayU. Klientka wpisuje kod BLIK z aplikacji banku i zatwierdza. Paragon wydrukuje się dopiero po opłaceniu.</span>';
+      box.innerHTML = '<span class="small">Po kliknięciu otworzy się okno PayU. Wpisujesz kod BLIK od klientki, a ona zatwierdza płatność w swojej aplikacji. Paragon wydrukuje się dopiero po opłaceniu.</span>';
     } else {
       box.hidden = true;
       box.innerHTML = '';
@@ -594,6 +607,10 @@
       ? [`Utworzyć płatność BLIK na ${zl(total)}? ${v.name} × ${sale.qty}. Paragon wydrukuje się po opłaceniu.`, 'Utwórz płatność']
       : [`Wystawić paragon fiskalny na ${zl(total)}? ${v.name} × ${sale.qty}, płatność: ${PAY_LABEL[sale.payment]}.`, 'Wystaw paragon'];
     if (!(await UI.ask(q[0], q[1]))) return;
+    // Okno płatności otwieramy od razu po kliknięciu (inaczej przeglądarka je zablokuje),
+    // a adres PayU wstawiamy, gdy sklep utworzy zamówienie.
+    const payWin = sale.payment === 'blik' ? window.open('', '_blank') : null;
+    if (payWin) payWin.document.write('<meta name="viewport" content="width=device-width"><p style="font:18px sans-serif;padding:24px">Otwieram płatność BLIK…</p>');
     const btn = $('#sellBtn');
     btn.disabled = true;
     btn.textContent = 'Wysyłam do sklepu…';
@@ -605,6 +622,7 @@
         card_id: sale.card ? sale.card.id : undefined
       });
       if (r.duplicate) throw new Error('Ta sprzedaż została już wysłana. Sprawdź listę ostatnich sprzedaży.');
+      if (payWin) { if (r.pay_url) payWin.location.href = r.pay_url; else payWin.close(); }
       if (r.card && r.stamps_added) Api.notifyStamp(r.card.id, r.card.stamps).catch(() => {});
       rememberEmail(sale.card, sale.email.trim().toLowerCase());
       sale = newSale();
@@ -612,6 +630,7 @@
       showResult(r, v.name);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
+      if (payWin) payWin.close();
       btn.disabled = false;
       btn.textContent = sale.payment === 'blik' ? 'Utwórz płatność BLIK' : 'Sprzedaj i wystaw paragon';
       err.textContent = e.message;
@@ -632,13 +651,13 @@
     const box = $('#saleResult');
     if (!box) return;
     const waiting = r.paid === false;
+    if (waiting) pending.set({ order_id: r.order_id, order_number: r.order_number, total: r.total, paid: false, pay_url: r.pay_url, stamps_expected: r.stamps_expected, product_name: productName });
     box.innerHTML = `<section class="panel panel--gold" style="gap:10px">
       <span class="eyebrow eyebrow--gold">${waiting ? 'Płatność BLIK' : 'Sprzedano'} · ${esc(productName)}</span>
       <span class="strong" style="font-size:17px">Zamówienie nr ${esc(r.order_number)} · ${zl(r.total)}</span>
-      ${waiting ? `<div class="qr-card" id="rPay" style="padding:18px">
-        ${UI.qrSvg(r.pay_url, { label: 'Kod QR do płatności BLIK', bg: '#ffffff' })}
-        <span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje kod swoim telefonem albo wpisuje kod BLIK na tym urządzeniu.</span>
-        <a class="btn btn--gold" href="${esc(r.pay_url)}" target="_blank" rel="noopener" style="width:100%">Zapłać kodem BLIK</a>
+      ${waiting ? `<div id="rPay" style="display:flex;flex-direction:column;gap:8px">
+        <span class="small">Okno PayU otworzyło się w nowej karcie. Wpisz tam kod BLIK, który poda Ci klientka, a klientka zatwierdzi płatność w aplikacji swojego banku. Potem wróć tutaj, paragon wydrukuje się sam.</span>
+        <a class="btn btn--gold" href="${esc(r.pay_url)}" target="_blank" rel="noopener">Otwórz płatność BLIK ponownie</a>
       </div>` : ''}
       <div class="hint" id="rStatus" role="status">${waiting ? 'Czekam na płatność BLIK…' : 'Paragon w kolejce…'}</div>
       <div id="rStamps">${stampsHtml(r)}</div>
@@ -669,12 +688,12 @@
       try { s = await Api.receiptStatus(orderId); } catch (e) { /* spróbujemy jeszcze raz */ }
       if (run !== pollRun) return;
       if (s && s.stamps_added !== undefined) { const st = $('#rStamps'); if (st) st.innerHTML = stampsHtml(s); if (s.card && s.stamps_added) Api.notifyStamp(s.card.id, s.card.stamps).catch(() => {}); }
-      if (s && s.failed) { set('Płatność nieudana lub anulowana. Paragonu nie ma.', 'error'); const p = $('#rPay'); if (p) p.hidden = true; loadHistory(); return; }
+      if (s && s.failed) { pending.clear(); set('Płatność nieudana lub anulowana. Paragonu nie ma.', 'error'); const p = $('#rPay'); if (p) p.hidden = true; loadHistory(); return; }
       if (s && s.paid === false) {
         if (Date.now() - started >= 300000) { set('Płatność BLIK jeszcze nie dotarła. Sprawdź ponownie za chwilę.', 'error'); loadHistory(); break; }
         set('Czekam na płatność BLIK…');
       } else {
-        if (paying) { paying = false; started = Date.now(); const p = $('#rPay'); if (p) p.hidden = true; }
+        if (paying) { paying = false; started = Date.now(); pending.clear(); const p = $('#rPay'); if (p) p.hidden = true; }
         if (s && s.receipt === 'confirmed') { set('Paragon wydrukowany ✅', 'reward'); loadHistory(); return; }
         if (s && s.receipt === 'error') { set('Błąd paragonu. Sprawdź program eDPS i zamówienie w WooCommerce.', 'error'); loadHistory(); break; }
         if (Date.now() - started >= 60000) { set('Paragon czeka – sprawdź, czy komputer z eDPS jest włączony.', 'error'); loadHistory(); break; }
