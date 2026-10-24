@@ -210,6 +210,14 @@
           return c ? { ...p, name: c.name, stamps: c.stamps, source: c.source, phone: c.phone, bday_today: Rules.isBdayToday(c.bday_day, c.bday_month), birthday_used_year: c.birthday_used_year } : null;
         }).filter(Boolean);
       }),
+      planRange: (from, to) => run(() => {
+        guard();
+        const db = load();
+        return (db.plan || []).filter((p) => p.day >= from && p.day <= to).map((p) => {
+          const c = db.cards.find((x) => x.id === p.card_id);
+          return c ? { ...p, name: c.name, stamps: c.stamps, source: c.source, phone: c.phone } : null;
+        }).filter(Boolean).sort((x, y) => (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~')));
+      }),
       planAdd: (cardId, service, day) => run(() => {
         guard();
         const db = load();
@@ -366,6 +374,7 @@
       startNewCard: (id) => rpc('start_new_card', { p_id: id }),
       useBirthday: (id, service, planId) => rpc('use_birthday', { p_id: id, p_service: service || null, p_plan_id: planId || null }),
       planList: (day) => rpc('plan_list', day ? { p_day: day } : {}),
+      planRange: (from, to) => rpc('plan_range', { p_from: from, p_to: to }),
       planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
