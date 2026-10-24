@@ -34,7 +34,8 @@
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const fail = (e) => toast(e.message || 'Coś poszło nie tak.', 'error');
   const appUrl = () => CFG.APP_URL || new URL('./', location.href).href;
-  const linkFor = (c) => appUrl() + '?k=' + encodeURIComponent(c.token);
+  // krótki link (?c=) po uruchomieniu krotki-link.sql, wcześniej długi klucz (?k=)
+  const linkFor = (c) => appUrl() + (c.link_code ? '?c=' + encodeURIComponent(c.link_code) : '?k=' + encodeURIComponent(c.token));
 
   // ---------- logowanie ----------
   async function start() {
@@ -376,7 +377,7 @@
   function smsText(c) {
     const p = UI.progressText(c.stamps);
     return 'Dzień dobry, ' + c.name.split(' ')[0] + '! Na Twojej karcie rytuałów w studiu ' + CFG.STUDIO_NAME + ' masz ' + c.stamps + '/10 pieczątek. ' +
-      p.head + '. Twoja karta: ' + linkFor(c) + ' Załóż aplikację, żeby mieć kartę zawsze pod ręką: ' + appUrl() + ' Do zobaczenia!';
+      p.head.replace(/[.!]$/, '') + '. Twoja karta otworzy się w przeglądarce, bez logowania: ' + linkFor(c) + ' Możesz ją też dodać do ekranu telefonu jak aplikację. Do zobaczenia!';
   }
   function smsHref(c) {
     const num = (c.phone || '').replace(/[^\d+]/g, '');

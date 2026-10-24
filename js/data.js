@@ -139,6 +139,7 @@
         const c = load().cards.find((x) => x.token === token);
         return c ? view(c) : null;
       }),
+      cardByLink: (code) => run(() => { const c = load().cards.find((x) => x.link_code === code); return c ? c.token : null; }),
       // pokaz logowania kodem SMS: kod to zawsze 123456
       smsLoginSend: (phone) => run(() => {
         if ((phone || '').replace(/\D/g, '').length < 9) throw new Error('Wpisz numer komórki, np. 600 000 000.');
@@ -357,6 +358,7 @@
       demo: false,
       registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
+      cardByLink: (code) => rpc('card_by_link', { p_code: code }),
       // logowanie do karty kodem SMS (funkcja kod-sms)
       smsLoginSend: (phone) => invoke('kod-sms', { action: 'send', phone }),
       smsLoginVerify: async (phone, code) => {

@@ -24,7 +24,15 @@
   // ---------- start ----------
   async function start() {
     const params = new URLSearchParams(location.search);
-    const linkToken = params.get('k');
+    let linkToken = params.get('k');
+    const shortLink = params.get('c');
+    if (shortLink && !linkToken) {
+      try { linkToken = await Api.cardByLink(shortLink); } catch (e) { /* bez połączenia: spróbuje zapisanej karty */ }
+      if (!linkToken) {
+        history.replaceState(null, '', location.pathname);
+        if (!CardStore.get()) return renderJoin('Ten link do karty jest nieaktualny. Poproś w studiu o nowy albo zaloguj się kodem SMS.');
+      }
+    }
     if (linkToken) {
       CardStore.set(linkToken);
       history.replaceState(null, '', location.pathname);
