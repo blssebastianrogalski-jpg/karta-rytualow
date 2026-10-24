@@ -15,10 +15,7 @@ const KLUCZ = 'WKLEJ_TUTAJ_KLUCZ_Z_PANELU';
 const SUPABASE_URL = 'https://pqvndgttgzaosjqjtxbg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Fs1pn9qjzVEHJjr9Qt8dEw_WicjPg3C';   // klucz publiczny aplikacji (ten sam co na stronie)
 const NADAWCA = 'no-reply@booksy.com';
-const TELEFON_STUDIA = '500694094';
 const TAG = 'tctd_booking';                // znacznik wydarzeń założonych przez skrypt
-const USLUGI = ['Master Kobido UP', 'Kobido UP', 'Head SPA Premium', 'Access Bars', 'Refleksologia Stóp Premium',
-  'Masaż relaksacyjny', 'Masaż aromaterapeutyczny', 'Masaż gorącą świecą', 'Masaż głowy', 'Masaż transbukalny', 'SeiKao'];
 
 // ---------------------------------------------------------------------------
 //  Konfiguracja i uruchamianie
@@ -262,88 +259,96 @@ function znajdzTerminy(text, received) {
   return out;
 }
 
-function etykieta(text, labels) {
-  const re = new RegExp('(?:^|\\n)\\s*(?:' + labels + ')\\s*[:\\-–]?\\s*\\n?\\s*([^\\n]+)', 'i');
-  const m = re.exec(text);
-  return m ? m[1].trim() : null;
+/** HTML maila → zwykły tekst (linia po linii, bez linków) */
+function htmlNaTekst(html) {
+  return (html || '')
+    .replace(/<(style|head|script)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h\d|table|td|center)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n));
 }
 
+/** Tekst → niepuste linie bez gwiazdek (pogrubienia z wersji tekstowej) i nadmiarowych spacji */
+function linie(text) {
+  return text.replace(/\r/g, '').split('\n')
+    .map((l) => l.replace(/\*/g, ' ').replace(/[ \t ]+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function czystaUsluga(s) {
+  if (!s) return null;
+  return s.replace(/^[A-ZĄĆĘŁŃÓŚŹŻ0-9 ,.&/+-]{3,}:\s*/, '')          // kategoria, np. „CIAŁO I RELAKS: ”
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '') // emoji
+    .replace(/\s+/g, ' ').trim().slice(0, 80) || null;
+}
+
+/**
+ * Rozpoznanie maila Booksy. Układ (sprawdzony na prawdziwych mailach, X.2026):
+ *  temat: „<Imię Nazwisko>: nowa rezerwacja <data> <godz>” | „<…>: zmienił rezerwację” | „<…>: odwołał wizytę z dnia <data> <godz>”
+ *  blok: <Imię Nazwisko> / <telefon> / <e-mail> / <dzień, D miesiąca RRRR, HH:MM - HH:MM> / <KATEGORIA: usługa> / <cena, godziny> / pracownik: …
+ *  zmiana: przed blokiem zdanie „… przesunął swoją wizytę <usługa> z dnia <data> <godz> na inny termin.” i „Nowy termin wizyty:”
+ * Numeru rezerwacji w mailach nie ma: wizytę wiąże telefon + termin.
+ */
 function rozpoznajMail(subject, plain, html, received) {
-  subject = subject || '';
-  const text = (plain || (html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|tr|li|h\d)>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' '))
-    .replace(/\r/g, '').replace(/[ \t]+/g, ' ');
-  const all = subject + '\n' + text;
-  const flat = bezOgonkow(all).toLowerCase();
-  const head = bezOgonkow(subject + '\n' + text.slice(0, 400)).toLowerCase();
+  subject = (subject || '').replace(/^\s*(fwd?|pd|re):\s*/i, '');
+  const text = html ? htmlNaTekst(html) : (plain || '');
+  const rows = linie(text);
+  const all = subject + '\n' + rows.join('\n');
+  const subj = bezOgonkow(subject).toLowerCase();
 
+  // rodzaj: z tematu (treść może zawierać np. zasady odwoływania w opisie usługi)
   let kind = 'unknown';
-  if (/odwola|anulow|cancel/.test(head)) kind = 'cancel';
-  else if (/zmian\w* termin|przeloz|przesun|przeniesi|nowy termin|zmienil\w* (termin|wizyt|rezerwacj)|reschedul/.test(head)) kind = 'change';
-  else if (/now\w* rezerwacj|now\w* wizyt|zarezerwowal|umowil|new booking|new appointment/.test(head)) kind = 'new';
+  if (/: odwolal|odwolal\w* wizyt|anulowal/.test(subj)) kind = 'cancel';
+  else if (/: zmienil|zmienil\w* rezerwacj|przesunal|przelozyl/.test(subj)) kind = 'change';
+  else if (/: nowa rezerwacja|nowa rezerwacja/.test(subj)) kind = 'new';
 
-  // numer rezerwacji: z treści albo z linku do wizyty
-  let booksyId = null;
-  const idText = /(?:numer|nr|id)\s*(?:rezerwacji|wizyty|zamowienia)?\s*[:#]?\s*([0-9]{5,})/i.exec(bezOgonkow(text));
-  const idLink = /appointments?[\/=](\d{5,})|appointment_id=(\d{5,})|bookings?\/(\d{5,})/i.exec(html || '');
-  if (idText) booksyId = idText[1];
-  else if (idLink) booksyId = idLink[1] || idLink[2] || idLink[3];
+  // klientka: z tematu („Imię Nazwisko: …”)
+  let name = null;
+  const sm = /^([^:]{2,80}):/.exec(subject);
+  if (sm && kind !== 'unknown') name = sm[1].trim();
 
-  // klientka
-  let name = etykieta(text, 'Klientka|Klient|Imię i nazwisko|Rezerwujący|Rezerwująca|Customer|Client');
-  if (!name) {
-    const s = /^[^:–\-]*[:–\-]\s*([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?:[ -][A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)+)/.exec(subject);
-    const v = /([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż-]+)+)\s+(?:zarezerwował|odwołał|zmienił|przełożył|umówił)/.exec(all);
-    name = s ? s[1] : v ? v[1] : null;
-  }
-  if (name) name = name.replace(/\s*[,(|].*$/, '').replace(/\d.*$/, '').trim().slice(0, 80) || null;
+  // blok z terminem: linia „dzień, D miesiąca RRRR, HH:MM - HH:MM”
+  const reBlock = /\d{1,2}\s+[a-ząćęłńóśźż]+\s+\d{4},?\s+\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}/i;
+  let bi = -1;
+  rows.forEach((l, i) => { if (bi === -1 && reBlock.test(l) && !/z dnia|w dniu/i.test(l)) bi = i; });
+  const termRow = bi >= 0 ? znajdzTerminy(rows[bi], received)[0] : null;
 
-  // telefon (bez numeru studia)
+  // telefon: z linii tuż nad terminem (imię / telefon / e-mail)
   let phone = null;
-  const reP = /(?:\+?48[\s-]?)?(\d{3})[\s-]?(\d{3})[\s-]?(\d{3})(?!\d)/g;
-  let pm;
-  while ((pm = reP.exec(text))) {
-    const n = pm[1] + pm[2] + pm[3];
-    if (n !== TELEFON_STUDIA) { phone = n; break; }
+  for (let i = Math.max(0, bi - 3); bi > 0 && i < bi; i++) {
+    const pm = /^(?:\+?48[\s-]?)?(\d{3})[\s-]?(\d{3})[\s-]?(\d{3})$/.exec(rows[i]);
+    if (pm) phone = pm[1] + pm[2] + pm[3];
+  }
+  if (!name && bi > 0) {
+    const cand = rows.slice(Math.max(0, bi - 3), bi).find((l) => /^[A-ZĄĆĘŁŃÓŚŹŻ][^\d@]{1,60}$/.test(l));
+    if (cand) name = cand;
   }
 
-  // usługa
-  let service = etykieta(text, 'Usługa|Usługi|Zabieg|Rytuał|Service');
-  if (!service) {
-    const hit = USLUGI.find((u) => flat.indexOf(bezOgonkow(u).toLowerCase()) !== -1);
-    if (hit) {
-      const i = flat.indexOf(bezOgonkow(hit).toLowerCase());
-      service = all.substr(i, hit.length + 1).replace(/[^\S]+$/, '').trim();
-    }
-  }
-  if (service) service = service.replace(/\s+\d+\s*(min|zł).*$/i, '').trim().slice(0, 80);
+  // usługa: linia pod terminem
+  const service = bi >= 0 && rows[bi + 1] && !/zł/.test(rows[bi + 1]) ? czystaUsluga(rows[bi + 1]) : null;
 
-  // terminy: przy zmianie stary i nowy
-  const terms = znajdzTerminy(all, received);
-  let cur = terms[terms.length - 1] || null;
+  // stary termin przy zmianie: ze zdania przed „Nowy termin wizyty”
   let old = null;
-  if (kind === 'change' && terms.length >= 2) {
-    const ft = bezOgonkow(all).toLowerCase();
-    const iNew = ft.search(/nowy termin|nowa data|\bna termin\b/);
-    const iOld = ft.search(/poprzedni\w* termin|dotychczasow\w* termin|stary termin|wczesniejsz\w* termin|\bz terminu\b/);
-    const firstAfter = (i) => terms.find((x) => x.index > i) || null;
-    if (iNew !== -1) cur = firstAfter(iNew) || cur;
-    if (iOld !== -1) old = firstAfter(iOld);
-    if (!old) old = terms.find((x) => x !== cur) || null;
-  } else if (terms.length) {
-    cur = terms[0];
+  if (kind === 'change') {
+    const ni = rows.findIndex((l) => /nowy termin/i.test(l));
+    const before = rows.slice(0, ni > 0 ? ni : bi > 0 ? bi : rows.length).join(' ');
+    const zi = bezOgonkow(before).toLowerCase().indexOf('z dnia');
+    old = znajdzTerminy(zi >= 0 ? before.slice(zi) : before, received)[0] || null;
   }
 
   return {
     kind: kind,
-    booksy_id: booksyId,
-    client_name: name,
+    booksy_id: null,
+    client_name: name ? name.slice(0, 80) : null,
     client_phone: phone,
     service: service,
-    start_local: cur ? cur.start : null,
-    end_local: cur ? cur.end : null,
+    start_local: termRow ? termRow.start : null,
+    end_local: termRow ? termRow.end : null,
     old_start_local: old ? old.start : null,
-    subject: kind === 'unknown' ? subject.slice(0, 150) : null
+    subject: kind === 'unknown' || !termRow ? subject.slice(0, 150) : null
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { rozpoznajMail: rozpoznajMail, znajdzTerminy: znajdzTerminy };
+if (typeof module !== 'undefined') module.exports = { rozpoznajMail: rozpoznajMail, znajdzTerminy: znajdzTerminy, htmlNaTekst: htmlNaTekst };
