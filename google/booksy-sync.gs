@@ -279,7 +279,7 @@ function linie(text) {
 
 function czystaUsluga(s) {
   if (!s) return null;
-  return s.replace(/^[A-ZĄĆĘŁŃÓŚŹŻ0-9 ,.&/+-]{3,}:\s*/, '')          // kategoria, np. „CIAŁO I RELAKS: ”
+  return s.replace(/^[^:]{2,40}:\s+/, '')                           // kategoria, np. „CIAŁO I RELAKS: ”, „Vouchery i Pakiety: ”
     .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '') // emoji
     .replace(/\s+/g, ' ').trim().slice(0, 80) || null;
 }

@@ -233,7 +233,7 @@ declare
   nm  text := nullif(trim(coalesce(e->>'client_name', '')), '');
   nn  text := public.booksy_norm(e->>'client_name');
   ph  text := public.booksy_phone9(e->>'client_phone');
-  svc text := nullif(trim(coalesce(e->>'service', '')), '');
+  svc text := nullif(trim(regexp_replace(coalesce(e->>'service', ''), '^[^:]{2,40}:\s+', '')), '');  -- bez kategorii Booksy
   st  timestamptz := public.booksy_local(e->>'start_local');
   en  timestamptz := public.booksy_local(e->>'end_local');
   ost timestamptz := public.booksy_local(e->>'old_start_local');
@@ -589,3 +589,11 @@ revoke all on function public.booksy_status(), public.booksy_new_key(), public.b
 grant execute on function public.booksy_status(), public.booksy_new_key(), public.booksy_disconnect(), public.booksy_request_sync(),
   public.booksy_retry(bigint), public.booksy_set_mode(text), public.booksy_import(text), public.booksy_assign(bigint, uuid)
   to authenticated;
+
+-- ---------- Porządki (bezpieczne przy ponownym uruchomieniu) ----------
+-- nazwy usług bez kategorii Booksy, np. „Vouchery i Pakiety: Pakiety Kobido UP®” → „Pakiety Kobido UP®”
+update public.day_plan p set service = regexp_replace(p.service, '^[^:]{2,40}:\s+', '')
+  where p.booking_id is not null and p.service ~ '^[^:]{2,40}:\s+';
+update public.booksy_bookings set service = regexp_replace(service, '^[^:]{2,40}:\s+', ''),
+  gcal_state = 'pending', gcal_attempts = 0, next_try_at = now(), updated_at = now()
+  where service ~ '^[^:]{2,40}:\s+';

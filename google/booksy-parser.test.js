@@ -134,6 +134,8 @@ const cases = [
     { kind: 'new' }],
   ['przekazany dalej (Fwd:)', 'Fwd: Iza Przykładowa: odwołał wizytę z dnia wtorek, 27 października 2026 17:30', ODWOLANIE_TXT, '',
     { kind: 'cancel', client_name: 'Iza Przykładowa' }],
+  ['kategoria pisana zwykłymi literami', 'Anna Testowa: nowa rezerwacja poniedziałek, 9 listopada 2026 17:10', NOWA_TXT.replace('CIAŁO I RELAKS: Masaż relaksacyjno-aromaterapeutyczny na ciepło', 'Vouchery i Pakiety: Pakiety Kobido UP®').replace(/26 października 2026, 17:30 - 19:00/, '9 listopada 2026, 17:10 - 18:40'), '',
+    { kind: 'new', service: 'Pakiety Kobido UP®', start_local: '2026-11-09T17:10' }],
   ['inny mail Booksy', 'Podsumowanie tygodnia w Booksy', 'Zobacz, jak minął Twój tydzień.', '', { kind: 'unknown', start_local: null }]
 ];
 
