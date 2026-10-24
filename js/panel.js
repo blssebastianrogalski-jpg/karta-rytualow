@@ -11,9 +11,14 @@
   let currentPlan = null;  // pozycja planu dnia, z której otwarto kartę
   let lastService = '';
   let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera
-  let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro
+  let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro, 2 = kolejne dni
+  let planMoreDay = null;  // dzień, na który „+” dodaje klientkę w widoku „Kolejne dni”
+  const PLAN_AHEAD = 30;   // ile dni naprzód można układać plan
   const DAY_NAME = ['dziś', 'jutro'];
-  const dayLabel = (o) => new Date(Rules.dayPL(o) + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const dateLabel = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const dayLabel = (o) => o < 2 ? dateLabel(Rules.dayPL(o)) : 'kolejne dni';
+  const planTarget = () => planDay < 2 ? Rules.dayPL(planDay) : (planMoreDay || Rules.dayPL(2));
+  const targetName = () => planDay < 2 ? DAY_NAME[planDay] : dateLabel(planTarget());
 
   if (Api.demo) $('#demoBar').hidden = false;
   UI.registerSW();
@@ -92,9 +97,14 @@
       <div id="bdays"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><span class="eyebrow" id="planTitle">Plan dnia · ${dayLabel(planDay)}</span></div>
-        <div class="tabs tabs--small" role="tablist" aria-label="Dzień planu">
+        <div class="tabs tabs--small tabs--three" role="tablist" aria-label="Dzień planu">
           <button role="tab" data-plan-day="0" aria-selected="${planDay === 0}">Dziś</button>
           <button role="tab" data-plan-day="1" aria-selected="${planDay === 1}">Jutro</button>
+          <button role="tab" data-plan-day="2" aria-selected="${planDay === 2}">Kolejne dni</button>
+        </div>
+        <div id="planPick" class="field" ${planDay === 2 ? '' : 'hidden'}>
+          <label class="small" for="planDate">„+” przy klientce doda ją na dzień:</label>
+          <input class="input" id="planDate" type="date" min="${Rules.dayPL(2)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${planMoreDay || Rules.dayPL(2)}" style="background:var(--surface)">
         </div>
         <div id="plan"><div class="spinner"></div></div>
         <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
@@ -113,8 +123,15 @@
       planDay = +b.dataset.planDay;
       document.querySelectorAll('[data-plan-day]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
       $('#planTitle').textContent = 'Plan dnia · ' + dayLabel(planDay);
+      $('#planPick').hidden = planDay !== 2;
       loadPlan(); loadList();
     }));
+    $('#planDate').addEventListener('change', (e) => {
+      const v = e.target.value;
+      if (v && v >= Rules.dayPL(2) && v <= Rules.dayPL(PLAN_AHEAD)) planMoreDay = v;
+      else { e.target.value = planTarget(); UI.toast('Wybierz dzień od pojutrza do ' + PLAN_AHEAD + ' dni naprzód.'); }
+      loadList();
+    });
     const opb = $('#ownerPushBtn');
     if (opb) opb.addEventListener('click', enableOwnerPush);
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
@@ -145,17 +162,17 @@
     if (!box) return;
     let plan;
     const day = planDay;
-    try { plan = await Api.planList(Rules.dayPL(day)); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
+    try { plan = day < 2 ? await Api.planList(Rules.dayPL(day)) : await Api.planRange(Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
-    if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.</span></div>'; return; }
+    if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">' + (day < 2 ? 'Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.' : 'Na kolejne ' + PLAN_AHEAD + ' dni nie ma jeszcze żadnych wizyt.') + '</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
     const hhmm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-    box.innerHTML = '<div class="panel panel--tight">' + plan.map((p) => {
+    const row = (p) => {
       const done = p.status !== 'planned';
       const tags = (p.booking_id ? ' <span class="tag">Booksy</span>' : '') + (p.conflict ? ' <span class="tag">kolizja</span>' : '') +
         (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '');
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : '') + (p.service || 'rytuał') + ' · ' +
-        (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? ' · teraz −15%' : p.stamps === 9 ? ' · teraz −30%' : ''));
+        (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
       return `<div class="client">
         <button class="client__main" ${target} style="${done ? 'opacity:.6' : ''}">
@@ -165,14 +182,25 @@
         </button>
         ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day || !p.card_id ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
       </div>`;
-    }).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
+    };
+    if (day < 2) {
+      box.innerHTML = '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
+    } else {
+      // kolejne dni: wizyty pogrupowane według dnia
+      const days = [...new Set(plan.map((p) => p.day))];
+      box.innerHTML = '<div style="display:flex;flex-direction:column;gap:12px">' + days.map((d) => {
+        const list = plan.filter((p) => p.day === d);
+        return `<div style="display:flex;flex-direction:column;gap:6px"><span class="small">${esc(dateLabel(d).replace(/^./, (ch) => ch.toUpperCase()))} · ${list.length} ${list.length === 1 ? 'wizyta' : list.length < 5 ? 'wizyty' : 'wizyt'}</span><div class="panel panel--tight">${list.map(row).join('')}</div></div>`;
+      }).join('') + '</div>';
+    }
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
     box.querySelectorAll('[data-integr]').forEach((b) => b.addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); }));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
       const p = plan.find((x) => String(x.id) === b.dataset.planDel);
-      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + DAY_NAME[day] + '? Karta i pieczątki zostaną bez zmian.' + (p.booking_id ? ' Rezerwację w Booksy odwołaj w Booksy.' : ''), 'Usuń z planu'))) return;
-      try { await Api.planRemove(p.id); toast('Usunięto z planu dnia.'); loadPlan(); } catch (e) { fail(e); }
+      const when = day < 2 ? DAY_NAME[day] : dateLabel(p.day);
+      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + when + '? Karta i pieczątki zostaną bez zmian.' + (p.booking_id ? ' Rezerwację w Booksy odwołaj w Booksy.' : ''), 'Usuń z planu'))) return;
+      try { await Api.planRemove(p.id); toast('Usunięto z planu.'); loadPlan(); } catch (e) { fail(e); }
     }));
   }
 
@@ -196,12 +224,12 @@
           <span class="avatar">${esc(UI.initials(c.name))}</span>
           <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${c.stamps} / 10 pieczątek${esc(tag)}</span></span>
         </button>
-        <button class="plus" data-plan-add="${esc(c.id)}" aria-label="Dodaj ${esc(c.name)} do planu na ${DAY_NAME[planDay]}">+</button>
+        <button class="plus" data-plan-add="${esc(c.id)}" aria-label="Dodaj ${esc(c.name)} do planu na ${esc(targetName())}">+</button>
       </div>`;
     }).join('');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
     box.querySelectorAll('[data-plan-add]').forEach((b) => b.addEventListener('click', async () => {
-      try { await Api.planAdd(b.dataset.planAdd, null, Rules.dayPL(planDay)); toast('Dodano do planu na ' + DAY_NAME[planDay] + '.'); loadPlan(); } catch (e) { fail(e); }
+      try { await Api.planAdd(b.dataset.planAdd, null, planTarget()); toast('Dodano do planu na ' + targetName() + '.'); loadPlan(); } catch (e) { fail(e); }
     }));
   }
 
