@@ -45,7 +45,7 @@ function synchronizuj() {
   const stats = { messages: 0, calendar: 0 };
   let preview = null;
   try {
-    const gmailOk = sprawdz(() => GmailApp.getInboxUnreadCount());
+    const gmailOk = sprawdz(() => GmailApp.getInboxUnreadCount()) !== false;
     const cal = kalendarz();
     const cfg = rpc('booksy_script_start', { p_key: KLUCZ, p_info: { gmail_ok: gmailOk, calendar_ok: !!cal } });
 
