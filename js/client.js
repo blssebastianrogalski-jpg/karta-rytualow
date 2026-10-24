@@ -60,6 +60,11 @@
       </div>
       <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
       ${msg ? '<p class="error" role="alert">' + esc(msg) + '</p>' : ''}
+      <div class="panel">
+        <span class="eyebrow eyebrow--gold">Masz już kartę?</span>
+        <p class="lead" style="font-size:14px;margin:0">Wpisz numer telefonu zapisany na karcie, a wyślę Ci SMS z kodem. Pieczątki zostaną na swoim miejscu.</p>
+        <button class="btn btn--line" id="smsLoginBtn">Zaloguj kodem SMS</button>
+      </div>
       <form class="panel" id="joinForm" novalidate>
         <h2>Załóż swoją kartę</h2>
         <div class="field"><label for="jName">Imię i nazwisko</label><input class="input" id="jName" autocomplete="name" required placeholder="np. Anna Kowalska"></div>
@@ -80,6 +85,7 @@
         <span class="eyebrow">Masz już kartę w studiu?</span>
         <p class="lead" style="font-size:14px">Jeśli kartę założyła Ci Justyna w studiu, nie zakładaj nowej. Otwórz link z SMS-a albo zeskanuj aparatem kod „Połącz z aplikacją”, który pokażę Ci w studiu. Pieczątki przejdą same.</p>
       </div>`;
+    $('#smsLoginBtn').addEventListener('click', () => renderSmsLogin());
     $('#joinForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = $('#jName').value.trim();
@@ -102,6 +108,97 @@
         btn.disabled = false; btn.textContent = 'Załóż kartę';
       }
     });
+  }
+
+  // ---------- powrót do karty kodem SMS ----------
+  function renderSmsLogin(phone) {
+    nav.hidden = true;
+    document.getElementById('app').classList.remove('app--nav');
+    main.innerHTML = `
+      <div class="center" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:6px">
+        <img src="img/mark.png" alt="" style="width:96px;height:96px">
+        <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
+        <h1>Wróć do swojej karty</h1>
+      </div>
+      <form class="panel" id="smsForm" novalidate>
+        <div class="field"><label for="sPhone">Numer telefonu z karty</label><input class="input" id="sPhone" type="tel" autocomplete="tel" inputmode="tel" placeholder="np. 600 000 000" value="${esc(phone || '')}"></div>
+        <p class="error" id="sErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="sBtn">Wyślij kod SMS</button>
+      </form>
+      <button class="linkbtn" id="sBack" style="align-self:center">Wróć</button>
+      <p class="small center">Na karcie nie ma telefonu albo SMS nie przychodzi? Poproś w studiu o link do swojej karty.</p>`;
+    $('#sBack').addEventListener('click', () => renderJoin());
+    $('#smsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const num = $('#sPhone').value.trim();
+      const err = $('#sErr');
+      if (num.replace(/\D/g, '').length < 9) { err.textContent = 'Wpisz numer komórki, np. 600 000 000.'; err.hidden = false; return; }
+      const btn = $('#sBtn'); btn.disabled = true; btn.textContent = 'Wysyłam…';
+      try {
+        const r = await Api.smsLoginSend(num);
+        renderSmsCode(num);
+        if (r && r.demoCode) toast('Tryb pokazowy: kod to ' + r.demoCode + '.');
+      } catch (ex) {
+        err.textContent = ex.message; err.hidden = false;
+        btn.disabled = false; btn.textContent = 'Wyślij kod SMS';
+      }
+    });
+  }
+
+  function renderSmsCode(phone) {
+    main.innerHTML = `
+      <div class="center" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:6px">
+        <img src="img/mark.png" alt="" style="width:96px;height:96px">
+        <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
+        <h1>Wpisz kod z SMS-a</h1>
+        <p class="lead">Jeśli numer ${esc(phone)} jest zapisany na karcie, SMS z kodem przyjdzie w ciągu minuty. Kod jest ważny 10 minut.</p>
+      </div>
+      <form class="panel" id="codeForm" novalidate>
+        <div class="field"><label for="sCode">Kod z SMS-a</label><input class="input" id="sCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 cyfr" style="letter-spacing:.3em;font-size:22px;text-align:center"></div>
+        <p class="error" id="cErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="cBtn">Zaloguj</button>
+      </form>
+      <div class="btn-row" style="justify-content:center">
+        <button class="linkbtn" id="cAgain">Wyślij kod ponownie</button>
+        <button class="linkbtn" id="cChange">Zmień numer</button>
+      </div>
+      <p class="small center">SMS nie przychodzi? Poproś w studiu o link do swojej karty.</p>`;
+    $('#sCode').focus();
+    $('#cChange').addEventListener('click', () => renderSmsLogin(phone));
+    $('#cAgain').addEventListener('click', async () => {
+      try { const r = await Api.smsLoginSend(phone); toast(r && r.demoCode ? 'Tryb pokazowy: kod to ' + r.demoCode + '.' : 'Wysłałam nowy kod.'); } catch (ex) { toast(ex.message); }
+    });
+    $('#codeForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const code = $('#sCode').value.replace(/\D/g, '');
+      const err = $('#cErr');
+      if (code.length !== 6) { err.textContent = 'Kod ma 6 cyfr.'; err.hidden = false; return; }
+      const btn = $('#cBtn'); btn.disabled = true; btn.textContent = 'Sprawdzam…';
+      try {
+        const cards = await Api.smsLoginVerify(phone, code);
+        if (!cards.length) throw new Error('Nie znalazłam karty z tym numerem. Poproś w studiu o link do swojej karty.');
+        if (cards.length === 1) return openFound(cards[0].token);
+        renderChooseCard(cards);
+      } catch (ex) {
+        err.textContent = ex.message; err.hidden = false;
+        btn.disabled = false; btn.textContent = 'Zaloguj';
+      }
+    });
+  }
+
+  // kilka kart z tym samym numerem (np. mama i córka)
+  function renderChooseCard(cards) {
+    main.innerHTML = `
+      <h1>Która karta jest Twoja?</h1>
+      <p class="lead">Na ten numer zapisanych jest kilka kart.</p>
+      <div class="panel panel--tight">${cards.map((c, i) => `<button class="list-row" data-pick="${i}" style="width:100%;background:none;border:none;color:inherit;text-align:left;padding:14px 4px"><span>${esc(c.name)}</span><span>${c.stamps} / 10</span></button>`).join('')}</div>`;
+    main.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => openFound(cards[+b.dataset.pick].token)));
+  }
+
+  function openFound(token) {
+    CardStore.set(token);
+    history.replaceState(null, '', location.pathname);
+    start().then(() => { if (card) toast('Witaj ponownie, ' + firstName() + '!'); });
   }
 
   // ---------- nawigacja ----------

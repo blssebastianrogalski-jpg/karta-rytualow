@@ -139,6 +139,17 @@
         const c = load().cards.find((x) => x.token === token);
         return c ? view(c) : null;
       }),
+      // pokaz logowania kodem SMS: kod to zawsze 123456
+      smsLoginSend: (phone) => run(() => {
+        if ((phone || '').replace(/\D/g, '').length < 9) throw new Error('Wpisz numer komórki, np. 600 000 000.');
+        return { ok: true, demoCode: '123456' };
+      }),
+      smsLoginVerify: (phone, code) => run(() => {
+        if (code !== '123456') throw new Error('Nieprawidłowy kod. W trybie pokazowym kod to 123456.');
+        const p9 = (phone || '').replace(/\D/g, '').slice(-9);
+        return load().cards.filter((c) => (c.phone || '').replace(/\D/g, '').slice(-9) === p9)
+          .map((c) => ({ name: c.name, stamps: c.stamps, token: c.token }));
+      }),
       // studio
       session: () => Promise.resolve(isStaff() ? { email: localStorage.getItem(SESSION) } : null),
       login: (email, password) => run(() => {
@@ -331,8 +342,8 @@
       }
       return data;
     };
-    const sale = async (body) => {
-      const { data, error } = await sb.functions.invoke('sprzedaz-vouchera', { body });
+    const invoke = async (fn, body) => {
+      const { data, error } = await sb.functions.invoke(fn, { body });
       if (error) {
         let msg = error.message;
         try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (e) { /* bez treści */ }
@@ -341,10 +352,18 @@
       }
       return data;
     };
+    const sale = (body) => invoke('sprzedaz-vouchera', body);
     return {
       demo: false,
       registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
+      // logowanie do karty kodem SMS (funkcja kod-sms)
+      smsLoginSend: (phone) => invoke('kod-sms', { action: 'send', phone }),
+      smsLoginVerify: async (phone, code) => {
+        const r = await invoke('kod-sms', { action: 'verify', phone, code });
+        if (!r.ok) throw new Error(r.error || 'Nieprawidłowy kod.');
+        return r.cards;
+      },
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       notifyStamp: async (cardId, stamps) => {
