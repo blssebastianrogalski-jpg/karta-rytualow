@@ -268,6 +268,43 @@
         return { order_number: s.order_number, total: s.total, paid: true, failed: false, receipt: s.receipt };
       }),
       voucherSales: () => run(() => { guard(); return (load().sales || []).slice(0, 20); }),
+      // integracja Booksy (pokaz: przykładowy stan po podłączeniu skryptu)
+      booksyStatus: () => run(() => {
+        guard();
+        const db = load();
+        const b = db.booksy || { connected: false, gcal_mode: 'delete', import_state: 'none' };
+        if (!b.connected) return { connected: false, gcal_mode: b.gcal_mode, import_state: 'none', processed: 0, errors: [], unrecognized: [], unassigned: [], upcoming: [], log: [] };
+        const at = (d, h) => { const x = new Date(Rules.dayPL(d) + 'T00:00:00'); x.setHours(h); return x.toISOString(); };
+        return Object.assign({
+          connected: true, connected_at: b.connected_at, script_last_seen: new Date(Date.now() - 120000).toISOString(), gmail_ok: true, calendar_ok: true,
+          last_ok_at: new Date(Date.now() - 120000).toISOString(), last_error: null, calendar_name: 'Twoje Ciało Twój Dobrostan | Wizyty',
+          processed: 3, bookings: 3,
+          errors: b.retried ? [] : [{ id: 3, service: 'Access Bars®', start: at(3, 12), error: 'Service unavailable', attempts: 2 }],
+          unrecognized: [{ at: new Date(Date.now() - 86400000).toISOString(), kind: 'unknown', subject: 'Podsumowanie tygodnia w Booksy', result: 'unrecognized' }],
+          unassigned: b.assigned ? [] : [{ id: 2, name: 'Maria Zielińska', service: 'Masaż gorącą świecą', start: at(1, 15), candidates: [] }],
+          upcoming: [
+            { id: 1, name: db.cards[0].name, service: 'Kobido UP®', start: at(1, 10), end: at(1, 11), gcal: 'synced', conflict: false, card: true },
+            { id: 2, name: 'Maria Zielińska', service: 'Masaż gorącą świecą', start: at(1, 15), end: at(1, 16), gcal: 'synced', conflict: false, card: !!b.assigned },
+            { id: 3, name: db.cards[1].name, service: 'Access Bars®', start: at(3, 12), end: at(3, 13), gcal: b.retried ? 'synced' : 'error', conflict: false, card: true }
+          ],
+          log: [{ at: new Date(Date.now() - 120000).toISOString(), level: 'info', message: 'Nowa rezerwacja zapisana.' }]
+        }, b);
+      }),
+      booksyNewKey: () => run(() => { guard(); const db = load(); db.booksy = Object.assign(db.booksy || {}, { connected: true, connected_at: new Date().toISOString(), gcal_mode: (db.booksy || {}).gcal_mode || 'delete', import_state: 'none' }); save(db); return 'tctd_demo_' + Math.random().toString(16).slice(2, 18); }),
+      booksyDisconnect: () => run(() => { guard(); const db = load(); db.booksy = Object.assign(db.booksy || {}, { connected: false }); save(db); }),
+      booksyRequestSync: () => run(() => { guard(); }),
+      booksyRetry: () => run(() => { guard(); const db = load(); db.booksy.retried = true; save(db); }),
+      booksySetMode: (mode) => run(() => { guard(); const db = load(); db.booksy.gcal_mode = mode; save(db); }),
+      booksyImport: (action) => run(() => {
+        guard(); const db = load();
+        db.booksy.import_state = action === 'preview' ? 'preview_ready' : action === 'apply' ? 'done' : 'none';
+        db.booksy.import_preview = action === 'preview' ? { at: new Date().toISOString(), items: [
+          { kind: 'new', name: 'Halina Mazur', service: 'Masaż gorącą świecą', start: new Date(Date.now() + 9 * 864e5).toISOString(), result: 'applied' },
+          { kind: 'cancel', name: 'Ewa Zielińska', service: 'Kobido UP®', start: new Date(Date.now() + 4 * 864e5).toISOString(), result: 'applied' },
+          { kind: 'new', name: 'Anna Kowalska', service: 'Kobido UP®', start: new Date(Date.now() - 5 * 864e5).toISOString(), result: 'past' }] } : null;
+        save(db);
+      }),
+      booksyAssign: () => run(() => { guard(); const db = load(); db.booksy.assigned = true; save(db); }),
       resetDemo: () => { try { localStorage.removeItem(KEY); localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
     };
   }
@@ -339,6 +376,14 @@
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),
       receiptStatus: (orderId) => sale({ action: 'status', order_id: orderId }),
+      booksyStatus: () => rpc('booksy_status', {}),
+      booksyNewKey: () => rpc('booksy_new_key', {}),
+      booksyDisconnect: () => rpc('booksy_disconnect', {}),
+      booksyRequestSync: () => rpc('booksy_request_sync', {}),
+      booksyRetry: (id) => rpc('booksy_retry', { p_id: id || null }),
+      booksySetMode: (mode) => rpc('booksy_set_mode', { p_mode: mode }),
+      booksyImport: (action) => rpc('booksy_import', { p_action: action }),
+      booksyAssign: (bookingId, cardId) => rpc('booksy_assign', { p_booking: bookingId, p_card: cardId || null }),
       voucherSales: async () => {
         const { data, error } = await sb.from('voucher_sales').select('*').order('created_at', { ascending: false }).limit(20);
         if (error) throw new Error(error.message);

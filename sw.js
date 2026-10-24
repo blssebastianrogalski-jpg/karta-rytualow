@@ -1,8 +1,8 @@
 // Pamięć podręczna: aplikacja otwiera się szybko i działa przy słabym zasięgu.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const ASSETS = [
   './', 'index.html', 'panel.html', 'config.js', 'css/style.css',
-  'js/data.js', 'js/ui.js', 'js/client.js', 'js/panel.js',
+  'js/data.js', 'js/ui.js', 'js/client.js', 'js/panel.js', 'js/integracje.js',
   'vendor/supabase.js', 'vendor/qrcode.js',
   'img/mark.png', 'img/mark-96.png', 'img/logo.png', 'img/favicon.png', 'img/icon-192.png'
 ];

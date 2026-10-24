@@ -79,6 +79,7 @@
 
   async function renderHome() {
     if (tab === 'sale') return renderSale();
+    if (tab === 'integr') return Integracje.render(main, () => { tab = 'home'; renderHome(); });
     main.innerHTML = `
       ${tabsHtml()}
       <h1>Panel studia</h1>
@@ -96,16 +97,18 @@
           <button role="tab" data-plan-day="1" aria-selected="${planDay === 1}">Jutro</button>
         </div>
         <div id="plan"><div class="spinner"></div></div>
-        <p class="small" style="margin:0">Dodaj klientki do planu na dziś albo wieczorem na jutro: przycisk „+” przy nazwisku dodaje do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
+        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <label class="eyebrow" for="search">Klientki</label>
         <input class="input" id="search" type="search" placeholder="Szukaj po imieniu, nazwisku lub telefonie" value="${esc(query)}" style="background:var(--surface)">
         <div class="panel panel--tight" id="list"><div class="spinner"></div></div>
-      </section>`;
+      </section>
+      <button class="btn btn--ghost" id="integrBtn">Integracje: Booksy i Kalendarz Google</button>`;
     bindTabs();
     $('#scanBtn').addEventListener('click', openScanner);
     $('#newBtn').addEventListener('click', () => openNewCard());
+    $('#integrBtn').addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); });
     document.querySelectorAll('[data-plan-day]').forEach((b) => b.addEventListener('click', () => {
       planDay = +b.dataset.planDay;
       document.querySelectorAll('[data-plan-day]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
@@ -146,22 +149,29 @@
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
     if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
+    const hhmm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
     box.innerHTML = '<div class="panel panel--tight">' + plan.map((p) => {
       const done = p.status !== 'planned';
+      const tags = (p.booking_id ? ' <span class="tag">Booksy</span>' : '') + (p.conflict ? ' <span class="tag">kolizja</span>' : '') +
+        (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '');
+      const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : '') + (p.service || 'rytuał') + ' · ' +
+        (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? ' · teraz −15%' : p.stamps === 9 ? ' · teraz −30%' : ''));
+      const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
       return `<div class="client">
-        <button class="client__main" data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}" style="${done ? 'opacity:.6' : ''}">
+        <button class="client__main" ${target} style="${done ? 'opacity:.6' : ''}">
           <span class="avatar" style="${done ? 'background:var(--gold);color:var(--on-gold);border-color:var(--gold)' : ''}">${done ? '✓' : esc(UI.initials(p.name))}</span>
-          <span><span class="client__name">${esc(p.name)}${!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : ''}</span>
-          <span class="client__meta">${esc(p.service || 'rytuał')} · ${done ? esc(MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? ' · teraz −15%' : p.stamps === 9 ? ' · teraz −30%' : '')}</span></span>
+          <span><span class="client__name">${esc(p.name)}${tags}</span>
+          <span class="client__meta">${esc(meta)}</span></span>
         </button>
-        ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
+        ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day || !p.card_id ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
       </div>`;
     }).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
+    box.querySelectorAll('[data-integr]').forEach((b) => b.addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); }));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
       const p = plan.find((x) => String(x.id) === b.dataset.planDel);
-      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + DAY_NAME[day] + '? Karta i pieczątki zostaną bez zmian.', 'Usuń z planu'))) return;
+      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + DAY_NAME[day] + '? Karta i pieczątki zostaną bez zmian.' + (p.booking_id ? ' Rezerwację w Booksy odwołaj w Booksy.' : ''), 'Usuń z planu'))) return;
       try { await Api.planRemove(p.id); toast('Usunięto z planu dnia.'); loadPlan(); } catch (e) { fail(e); }
     }));
   }
