@@ -597,3 +597,38 @@ update public.day_plan p set service = regexp_replace(p.service, '^[^:]{2,40}:\s
 update public.booksy_bookings set service = regexp_replace(service, '^[^:]{2,40}:\s+', ''),
   gcal_state = 'pending', gcal_attempts = 0, next_try_at = now(), updated_at = now()
   where service ~ '^[^:]{2,40}:\s+';
+
+-- ---------- Plan na kolejne dni (pojutrze i dalej, do 30 dni naprzód) ----------
+create or replace function public.plan_range(p_from date, p_to date)
+returns json language plpgsql security definer set search_path = public as $$
+begin
+  perform public.staff_check();
+  return coalesce((
+    select json_agg(json_build_object(
+      'id', p.id, 'day', p.day, 'card_id', p.card_id, 'service', p.service, 'status', p.status,
+      'name', coalesce(c.name, p.guest_name, 'Klientka Booksy'), 'stamps', coalesce(c.stamps, 0), 'source', c.source, 'phone', c.phone,
+      'start_at', p.start_at, 'booking_id', p.booking_id,
+      'conflict', coalesce(b.conflict or b.calendar_conflict, false)
+    ) order by p.day, p.start_at nulls last, p.created_at)
+    from public.day_plan p
+    left join public.cards c on c.id = p.card_id
+    left join public.booksy_bookings b on b.id = p.booking_id
+    where p.day between p_from and least(p_to, p_from + 62)
+  ), '[]'::json);
+end $$;
+
+create or replace function public.plan_add(p_card uuid, p_service text default null, p_day date default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare d date := coalesce(p_day, public.today_pl());
+begin
+  perform public.staff_check();
+  if d < public.today_pl() then raise exception 'Ten dzień już minął.'; end if;
+  if d > public.today_pl() + 30 then raise exception 'Plan można ułożyć najwyżej 30 dni naprzód.'; end if;
+  if exists (select 1 from public.day_plan where card_id = p_card and day = d and status = 'planned') then
+    raise exception 'Ta klientka jest już w planie na ten dzień.';
+  end if;
+  insert into public.day_plan (card_id, service, day) values (p_card, nullif(trim(coalesce(p_service, '')), ''), d);
+end $$;
+
+revoke all on function public.plan_range(date, date), public.plan_add(uuid, text, date) from public, anon;
+grant execute on function public.plan_range(date, date), public.plan_add(uuid, text, date) to authenticated;
