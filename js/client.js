@@ -231,7 +231,26 @@
         <span class="code">KARTA ${esc(card.code)}</span>
       </div>
       <p class="lead center">Pokaż ten kod po wizycie. Pieczątka pojawi się na Twojej karcie od razu.</p>
-      <p class="small center">Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>`;
+      <p class="small center">Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
+      <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
+    $('#forgetBtn').addEventListener('click', forgetCard);
+  }
+
+  // wylogowanie: karta znika tylko z tego urządzenia, pieczątki zostają w studiu
+  async function forgetCard() {
+    if (!(await UI.ask('Wylogować z karty na tym urządzeniu? Pieczątki zostają zapisane w studiu. Kartę przywrócisz linkiem, o który poprosisz w studiu.', 'Wyloguj'))) return;
+    try {
+      const reg = 'serviceWorker' in navigator && await navigator.serviceWorker.getRegistration();
+      const sub = reg && reg.pushManager && await reg.pushManager.getSubscription();
+      if (sub) await sub.unsubscribe();
+    } catch (e) { /* bez powiadomień nic nie szkodzi */ }
+    CardStore.clear();
+    card = null;
+    clearInterval(poll);
+    history.replaceState(null, '', location.pathname);
+    renderJoin();
+    window.scrollTo(0, 0);
+    toast('Wylogowano z karty na tym urządzeniu.');
   }
 
   // ---------- odświeżanie (pieczątka pojawia się sama) ----------
