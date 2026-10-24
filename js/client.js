@@ -244,6 +244,12 @@
     const pushBlocked = CFG.PUSH_PUBLIC_KEY && 'Notification' in window && Notification.permission === 'denied';
     if (pushBlocked) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Nie dostajesz przypomnień? Odblokuj powiadomienia: stuknij ikonę kłódki przy adresie, potem <b>Uprawnienia</b> → <b>Powiadomienia</b> → <b>Zezwól</b>.</span></div>';
     const visits = (card.visits || []).slice(0, 5);
+    const upcoming = card.upcoming || [];
+    const next = upcoming.length ? `<section class="panel" style="gap:6px" aria-label="Najbliższa wizyta">
+        <span class="eyebrow eyebrow--gold">${upcoming.length > 1 ? 'Twoje najbliższe wizyty' : 'Twoja najbliższa wizyta'}</span>
+        ${upcoming.map((u, i) => `<div style="display:flex;flex-direction:column;gap:2px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}"><span class="strong" style="font-size:${i ? 15 : 17}px">${esc(visitWhen(u))}</span>${u.service ? '<span class="small" style="color:var(--text-2)">' + esc(cleanService(u.service)) + '</span>' : ''}</div>`).join('')}
+        <span class="small">Zmienisz lub odwołasz ${upcoming.length > 1 ? 'je' : 'ją'} w Booksy.</span>
+      </section>` : '';
     const lastVisit = visits[0];
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
     const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
@@ -257,6 +263,7 @@
         <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span></div>
         ${card.cards_completed ? '<span class="small">Ukończone karty: ' + card.cards_completed + '. Dziękuję, że jesteś!</span>' : ''}
       </section>
+      ${next}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
       ${install}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
@@ -270,6 +277,16 @@
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
   }
+
+  // „Jutro, 10:30” / „wtorek, 3 listopada, 15:00” (czas polski)
+  function visitWhen(u) {
+    const label = u.day === Rules.dayPL(0) ? 'Dziś' : u.day === Rules.dayPL(1) ? 'Jutro'
+      : new Date(u.day + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (ch) => ch.toUpperCase());
+    const time = u.start_at ? new Date(u.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' }) : '';
+    return label + (time ? ', ' + time : '');
+  }
+  // nazwa usługi bez ozdobników z Booksy (gwiazdki, emotki)
+  function cleanService(s) { return s.replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, (ch) => '\u00AE\u00A9\u2122'.includes(ch) ? ch : '').replace(/\s{2,}/g, ' ').trim(); }
 
   // Zgoda na powiadomienia i zapis subskrypcji na karcie klientki.
   async function enablePush() {

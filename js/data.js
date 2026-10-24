@@ -106,6 +106,9 @@
       const out = JSON.parse(JSON.stringify(c));
       out.visits = (out.visits || []).slice(0, 12);
       out.bday_today = Rules.isBdayToday(c.bday_day, c.bday_month);
+      out.upcoming = (load().plan || []).filter((p) => p.card_id === c.id && p.status === 'planned' && p.day >= Rules.dayPL(0))
+        .sort((x, y) => (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~'))).slice(0, 3)
+        .map((p) => ({ day: p.day, start_at: p.start_at || null, service: p.service }));
       return out;
     }
     function mutate(id, fn) {
