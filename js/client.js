@@ -248,7 +248,7 @@
     const next = upcoming.length ? `<section class="panel" style="gap:6px" aria-label="Najbliższa wizyta">
         <span class="eyebrow eyebrow--gold">${upcoming.length > 1 ? 'Twoje najbliższe wizyty' : 'Twoja najbliższa wizyta'}</span>
         ${upcoming.map((u, i) => `<div style="display:flex;flex-direction:column;gap:2px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}"><span class="strong" style="font-size:${i ? 15 : 17}px">${esc(visitWhen(u))}</span>${u.service ? '<span class="small" style="color:var(--text-2)">' + esc(cleanService(u.service)) + '</span>' : ''}</div>`).join('')}
-        <span class="small">Zmienisz lub odwołasz ${upcoming.length > 1 ? 'je' : 'ją'} w Booksy.</span>
+        <a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">Zmień lub odwołaj w Booksy</a>
       </section>` : '';
     const lastVisit = visits[0];
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
