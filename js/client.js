@@ -317,7 +317,7 @@
       body = '<p class="lead">Nie mam jeszcze Twojej daty urodzin. Podaj ją przy najbliższej wizycie, a dopiszę ją do karty.</p>';
     } else if (card.bday_today && card.birthday_used_year !== y) {
       status = 'Dziś!';
-      body = '<p class="lead">Wszystkiego najpiękniejszego! Dziś Twój rytuał jest o połowę tańszy. Zarezerwuj wizytę na dziś i pokaż swój kod przy płatności.</p>';
+      body = '<p class="lead">Wszystkiego najpiękniejszego! Dziś masz −20% na dowolny rytuał. Zarezerwuj wizytę na dziś i pokaż swój kod przy płatności.</p>';
     } else if (card.birthday_used_year === y) {
       status = 'Wykorzystany w tym roku';
       body = '<p class="lead">Mam nadzieję, że urodzinowy rytuał był wyjątkowy. Kolejny prezent czeka za rok.</p>';
