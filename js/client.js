@@ -8,11 +8,17 @@
   let screen = 'card';
   let poll = null;
   let installEvt = null;
+  // Karta działa tylko jako aplikacja z ikony na ekranie telefonu. W przeglądarce pokazujemy instrukcję instalacji.
+  const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const UA = navigator.userAgent;
+  const IOS = /iphone|ipad|ipod/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+  const IN_APP = /FBAN|FBAV|FB_IAB|FBIOS|Instagram|Messenger|Line\/|; wv\)/i.test(UA);
 
   if (Api.demo) $('#demoBar').hidden = false;
   UI.registerSW();
 
-  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (screen === 'card' && card) render(); });
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (screen === 'install') renderInstall(); else if (screen === 'card' && card) render(); });
+  window.addEventListener('appinstalled', () => { installEvt = null; if (screen === 'install') renderInstall(true); });
 
   const VISIT_LABEL = {
     stamp: 'Pojedynczy rytuał',
@@ -32,6 +38,14 @@
         history.replaceState(null, '', location.pathname);
         if (!CardStore.get()) return renderJoin('Ten link do karty jest nieaktualny. Poproś w studiu o nowy albo zaloguj się kodem SMS.');
       }
+    }
+    if (!STANDALONE && !Api.demo) {
+      if (linkToken) CardStore.set(linkToken);
+      // iPhone trzyma aplikację z ekranu osobno od Safari, więc link karty musi trafić do ikony
+      const keep = IOS && (linkToken || CardStore.get());
+      history.replaceState(null, '', location.pathname + (keep ? '?k=' + encodeURIComponent(keep) : ''));
+      if (keep) carryToIcon(keep);
+      return renderInstall();
     }
     if (linkToken) {
       CardStore.set(linkToken);
@@ -54,6 +68,64 @@
   }
 
   function firstName() { return card ? card.name.split(/\s+/)[0] : ''; }
+
+  // ---------- instalacja (karta nie otwiera się w przeglądarce) ----------
+  function carryToIcon(token) {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) return;
+    const base = new URL('./', location.href).href;
+    fetch(link.href).then((r) => r.json()).then((m) => {
+      m.start_url = base + '?k=' + encodeURIComponent(token) + '#card';
+      m.scope = base; m.id = base;
+      m.icons = (m.icons || []).map((i) => ({ ...i, src: new URL(i.src, base).href }));
+      link.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(m));
+    }).catch(() => { /* zostaje adres strony z linkiem karty */ });
+  }
+
+  function renderInstall(installed) {
+    screen = 'install';
+    nav.hidden = true;
+    document.getElementById('app').classList.remove('app--nav');
+    const hasCard = !!CardStore.get();
+    const step = (n, html) => `<div class="install"><span class="install__n">${n}</span><span style="flex:1">${html}</span></div>`;
+    let how;
+    if (installed) {
+      how = step('✓', 'Gotowe! Zamknij przeglądarkę i otwórz <b>Kartę rytuałów</b> z ikony na ekranie telefonu.');
+    } else if (IN_APP) {
+      how = step(1, 'Ten link otworzył się wewnątrz Messengera, Facebooka albo Instagrama. Stuknij <b>⋯</b> w rogu ekranu i wybierz <b>Otwórz w przeglądarce</b>' + (IOS ? ' (Safari)' : ' (Chrome)') + '.')
+        + step(2, 'W przeglądarce zobaczysz tę stronę jeszcze raz, z instrukcją dodania karty do ekranu.');
+    } else if (IOS) {
+      how = step(1, 'Stuknij <b>Udostępnij</b> ⬆︎ na dole ekranu (w Safari).')
+        + step(2, 'Przewiń w dół i wybierz <b>Do ekranu początkowego</b>, potem <b>Dodaj</b>.')
+        + step(3, 'Otwórz <b>Kartę rytuałów</b> z nowej ikony na ekranie telefonu.');
+    } else if (installEvt) {
+      how = `<button class="btn btn--gold" id="installBtn">Zainstaluj aplikację</button>`
+        + step(2, 'Potem otwórz <b>Kartę rytuałów</b> z ikony na ekranie telefonu.');
+    } else {
+      how = step(1, 'Stuknij menu <b>⋮</b> w rogu przeglądarki.')
+        + step(2, 'Wybierz <b>Zainstaluj aplikację</b> albo <b>Dodaj do ekranu głównego</b>. Jeśli widzisz <b>Otwórz w aplikacji</b>, karta jest już zainstalowana.')
+        + step(3, 'Otwórz <b>Kartę rytuałów</b> z ikony na ekranie telefonu.');
+    }
+    main.innerHTML = `
+      <div class="center" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding-top:6px">
+        <img src="img/mark.png" alt="" style="width:120px;height:120px">
+        <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
+        <h1>${hasCard ? 'Twoja karta<br>czeka w aplikacji' : 'Dodaj kartę<br>do ekranu telefonu'}</h1>
+        <p class="lead">Karta rytuałów działa jako aplikacja na Twoim telefonie. Dzięki temu masz ją zawsze pod ręką i dostajesz przypomnienia o pieczątkach i urodzinach.</p>
+      </div>
+      <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
+      <div class="panel" style="gap:10px">
+        <span class="eyebrow eyebrow--gold">Jak dodać kartę</span>
+        ${how}
+      </div>
+      ${hasCard && IOS ? '<p class="small center">Jeśli po otwarciu z ikony nie zobaczysz swojej karty, wybierz <b>Zaloguj kodem SMS</b> i wpisz numer zapisany w studiu. Pieczątki zostaną na swoim miejscu.</p>' : ''}`;
+    const ib = $('#installBtn');
+    if (ib) ib.addEventListener('click', async () => {
+      installEvt.prompt();
+      const r = await installEvt.userChoice.catch(() => null);
+      if (r && r.outcome === 'accepted') renderInstall(true);
+    });
+  }
 
   // ---------- zakładanie karty ----------
   function renderJoin(msg) {
@@ -91,7 +163,7 @@
       </form>
       <div class="panel">
         <span class="eyebrow">Masz już kartę w studiu?</span>
-        <p class="lead" style="font-size:14px">Jeśli kartę założyła Ci Justyna w studiu, nie zakładaj nowej. Otwórz link z SMS-a albo zeskanuj aparatem kod „Połącz z aplikacją”, który pokażę Ci w studiu. Pieczątki przejdą same.</p>
+        <p class="lead" style="font-size:14px">Jeśli kartę założyła Ci Justyna w studiu, nie zakładaj nowej. Zaloguj się kodem SMS na numer zapisany w studiu albo otwórz link z SMS-a. Pieczątki przejdą same.</p>
       </div>`;
     $('#smsLoginBtn').addEventListener('click', () => renderSmsLogin());
     $('#joinForm').addEventListener('submit', async (e) => {
