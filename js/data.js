@@ -106,6 +106,10 @@
       const out = JSON.parse(JSON.stringify(c));
       out.visits = (out.visits || []).slice(0, 12);
       out.bday_today = Rules.isBdayToday(c.bday_day, c.bday_month);
+      const all = load().cards;
+      const ref = all.find((x) => x.id === c.referred_by);
+      Object.assign(out, { ref_welcome: !!c.ref_welcome, bonus_stamps: c.bonus_stamps || 0, referred_by_name: ref ? ref.name : null,
+        ref_count: all.filter((x) => x.referred_by === c.id).length, ref_rewarded: all.filter((x) => x.referred_by === c.id && x.ref_rewarded_at).length });
       out.upcoming = (load().plan || []).filter((p) => p.card_id === c.id && p.status === 'planned' && p.day >= Rules.dayPL(0))
         .sort((x, y) => (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~'))).slice(0, 3)
         .map((p) => ({ day: p.day, start_at: p.start_at || null, service: p.service }));
@@ -119,6 +123,23 @@
       save(db);
       return view(c);
     }
+    // jak wyzwalacze w bazie (program-polecen.sql): −10% na pierwszy rytuał z polecenia, pieczątka dla polecającej
+    function bonus(c) {
+      while ((c.bonus_stamps || 0) > 0 && c.stamps < 10 && c.stamps !== 4 && c.stamps !== 9) {
+        c.stamps += 1; c.bonus_stamps -= 1;
+        c.visits.unshift({ kind: 'referral', service: null, discount: 0, created_at: new Date().toISOString() });
+      }
+    }
+    function addVisit(db, c, v) {
+      if (v.kind === 'stamp' && !v.discount && c.ref_welcome) { v.discount = 10; c.ref_welcome = false; }
+      c.visits.unshift(v);
+      if (c.referred_by && !c.ref_rewarded_at) {
+        c.ref_rewarded_at = v.created_at;
+        const r = db.cards.find((x) => x.id === c.referred_by);
+        if (r) { r.bonus_stamps = (r.bonus_stamps || 0) + 1; bonus(r); }
+      }
+      bonus(c);
+    }
     const isStaff = () => { try { return !!localStorage.getItem(SESSION); } catch (e) { return false; } };
     const guard = () => { if (!isStaff()) throw new Error('Brak dostępu.'); };
     const wait = (v) => new Promise((res) => setTimeout(() => res(v), 120));
@@ -126,12 +147,17 @@
 
     return {
       demo: true,
-      registerCard: ({ name, phone, day, month }) => run(() => {
+      registerCard: ({ name, phone, day, month, ref }) => run(() => {
         if (!name || name.trim().length < 2) throw new Error('Podaj imię i nazwisko.');
         const db = load();
+        const r = ref ? db.cards.find((x) => x.code === String(ref).toUpperCase().trim()) : null;
+        const p9 = (phone || '').replace(/\D/g, '').slice(-9);
+        if (r && p9.length < 9) throw new Error('Podaj numer telefonu, aby dostać rabat −10% z polecenia.');
+        if (r && db.cards.some((x) => (x.phone || '').replace(/\D/g, '').slice(-9) === p9)) throw new Error('Ten numer ma już kartę rytuałów. Rabat z polecenia jest dla nowych klientek. Zaloguj się kodem SMS, aby wrócić do swojej karty.');
         const c = { id: uid(), code: rnd(6, alphabet), token: rnd(36, '0123456789abcdef'), name: name.trim(), phone: phone || null,
           bday_day: day || null, bday_month: month || null, stamps: 0, cards_completed: 0, birthday_used_year: null,
-          source: 'app', note: null, created_at: new Date().toISOString(), visits: [] };
+          source: 'app', note: null, created_at: new Date().toISOString(), visits: [],
+          referred_by: r ? r.id : null, ref_welcome: !!r, bonus_stamps: 0 };
         db.cards.push(c); save(db);
         return view(c);
       }),
@@ -142,6 +168,7 @@
         const c = load().cards.find((x) => x.token === token);
         return c ? view(c) : null;
       }),
+      referralInfo: (code) => run(() => { const c = load().cards.find((x) => x.code === String(code || '').toUpperCase().trim()); return c ? { name: c.name.split(/\s+/)[0] } : null; }),
       cardByLink: (code) => run(() => { const c = load().cards.find((x) => x.link_code === code); return c ? c.token : null; }),
       markAppOpen: (token) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
@@ -170,6 +197,15 @@
       }),
       logout: () => { try { localStorage.removeItem(SESSION); } catch (e) { /* ignore */ } return Promise.resolve(); },
       findCard: (code) => run(() => { guard(); const c = load().cards.find((x) => x.code === String(code).toUpperCase().trim()); return c ? view(c) : null; }),
+      referralsList: () => run(() => {
+        guard();
+        const all = load().cards;
+        return all.filter((f) => f.referred_by).map((f) => {
+          const r = all.find((x) => x.id === f.referred_by) || {};
+          return { id: f.id, name: f.name, created_at: f.created_at, ref_welcome: !!f.ref_welcome, ref_rewarded_at: f.ref_rewarded_at || null,
+            referrer_id: r.id, referrer_name: r.name, referrer_stamps: r.stamps, referrer_bonus: r.bonus_stamps || 0 };
+        }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      }),
       getCard: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return c ? view(c) : null; }),
       listCards: (q) => run(() => {
         guard();
@@ -202,7 +238,7 @@
           c.stamps += 1;
           d = Rules.discountFor(c.stamps);
         }
-        c.visits.unshift({ kind: mode, service: service || null, discount: d, created_at: new Date().toISOString() });
+        addVisit(db, c, { kind: mode, service: service || null, discount: d, created_at: new Date().toISOString() });
         if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) { p.status = mode; if (service) p.service = service; } }
       }); }),
       removeStamp: (id) => run(() => { guard(); return mutate(id, (c) => {
@@ -220,7 +256,7 @@
         if (!Rules.isBdayToday(c.bday_day, c.bday_month)) throw new Error('Rabat urodzinowy działa tylko w dniu urodzin.');
         if (c.birthday_used_year === y) throw new Error('Rabat urodzinowy został już wykorzystany w tym roku.');
         c.birthday_used_year = y;
-        c.visits.unshift({ kind: 'birthday', service: service || null, discount: 20, created_at: new Date().toISOString() });
+        addVisit(db, c, { kind: 'birthday', service: service || null, discount: 20, created_at: new Date().toISOString() });
         if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = 'birthday'; }
       }); }),
       planList: (day) => run(() => {
@@ -366,7 +402,8 @@
     const sale = (body) => invoke('sprzedaz-vouchera', body);
     return {
       demo: false,
-      registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
+      registerCard: ({ name, phone, day, month, ref }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_ref: ref || null }),
+      referralInfo: (code) => rpc('referral_info', { p_code: code }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
       markAppOpen: (token) => rpc('mark_app_open', { p_token: token }),
       cardByLink: (code) => rpc('card_by_link', { p_code: code }),
@@ -398,6 +435,7 @@
       logout: () => sb.auth.signOut(),
       findCard: (code) => rpc('find_card', { p_code: code }),
       getCard: (id) => rpc('get_card', { p_id: id }),
+      referralsList: () => rpc('referrals_list', {}),
       listCards: (q) => rpc('list_cards', { p_query: q || '' }),
       appStatus: () => rpc('cards_app_status', {}),
       createStudioCard: ({ name, phone, email, day, month, stamps }) => rpc('create_studio_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_stamps: stamps || 0, p_email: email || null }),

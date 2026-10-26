@@ -24,14 +24,33 @@
     stamp: 'Pojedynczy rytuał',
     package_buy: 'Zakup pakietu',
     package_visit: 'Wizyta z pakietu',
-    birthday: 'Rytuał urodzinowy −20%'
+    birthday: 'Rytuał urodzinowy −20%',
+    referral: 'Pieczątka za polecenie'
   };
+
+  // kod polecającej z linku …/?p=KOD (czeka, aż koleżanka założy kartę)
+  const REF_KEY = 'tctd.ref';
+  const RefStore = {
+    get() { try { return localStorage.getItem(REF_KEY); } catch (e) { return null; } },
+    set(v) { try { localStorage.setItem(REF_KEY, v); } catch (e) { /* ignore */ } },
+    clear() { try { localStorage.removeItem(REF_KEY); } catch (e) { /* ignore */ } }
+  };
+  let refName = null;
+  async function loadRefName() {
+    const code = RefStore.get();
+    if (!code || refName !== null) return refName;
+    try { const r = await Api.referralInfo(code); refName = r ? r.name : ''; } catch (e) { return null; }
+    if (!refName) RefStore.clear();
+    return refName;
+  }
 
   // ---------- start ----------
   async function start() {
     const params = new URLSearchParams(location.search);
     let linkToken = params.get('k');
     const shortLink = params.get('c');
+    const refCode = (params.get('p') || '').trim().toUpperCase();
+    if (/^[A-Z0-9]{6}$/.test(refCode)) RefStore.set(refCode);
     if (shortLink && !linkToken) {
       try { linkToken = await Api.cardByLink(shortLink); } catch (e) { /* bez połączenia: spróbuje zapisanej karty */ }
       if (!linkToken) {
@@ -43,14 +62,14 @@
       if (linkToken) CardStore.set(linkToken);
       // iPhone trzyma aplikację z ekranu osobno od Safari, więc link karty musi trafić do ikony
       const keep = IOS && (linkToken || CardStore.get());
-      history.replaceState(null, '', location.pathname + (keep ? '?k=' + encodeURIComponent(keep) : ''));
-      if (keep) carryToIcon(keep);
+      const ref = IOS && !keep && RefStore.get();
+      const query = keep ? '?k=' + encodeURIComponent(keep) : ref ? '?p=' + encodeURIComponent(ref) : '';
+      history.replaceState(null, '', location.pathname + query);
+      if (query) carryToIcon(query);
       return renderInstall();
     }
-    if (linkToken) {
-      CardStore.set(linkToken);
-      history.replaceState(null, '', location.pathname);
-    }
+    if (linkToken || refCode) history.replaceState(null, '', location.pathname);
+    if (linkToken) CardStore.set(linkToken);
     const token = CardStore.get();
     if (!token) return renderJoin();
     try {
@@ -71,12 +90,12 @@
   function firstName() { return card ? card.name.split(/\s+/)[0] : ''; }
 
   // ---------- instalacja (karta nie otwiera się w przeglądarce) ----------
-  function carryToIcon(token) {
+  function carryToIcon(query) {
     const link = document.querySelector('link[rel="manifest"]');
     if (!link) return;
     const base = new URL('./', location.href).href;
     fetch(link.href).then((r) => r.json()).then((m) => {
-      m.start_url = base + '?k=' + encodeURIComponent(token) + '#card';
+      m.start_url = base + query + '#card';
       m.scope = base; m.id = base;
       m.icons = (m.icons || []).map((i) => ({ ...i, src: new URL(i.src, base).href }));
       link.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(m));
@@ -115,11 +134,13 @@
         <p class="lead">Karta rytuałów działa jako aplikacja na Twoim telefonie. Dzięki temu masz ją zawsze pod ręką i dostajesz przypomnienia o pieczątkach i urodzinach.</p>
       </div>
       <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
+      ${!hasCard && RefStore.get() ? inviteBox('Dodaj kartę do ekranu telefonu i załóż ją w aplikacji. Rabat zapisze się na Twojej karcie.') : ''}
       <div class="panel" style="gap:10px">
         <span class="eyebrow eyebrow--gold">Jak dodać kartę</span>
         ${how}
       </div>
       ${hasCard && IOS ? '<p class="small center">Jeśli po otwarciu z ikony nie zobaczysz swojej karty, wybierz <b>Zaloguj kodem SMS</b> i wpisz numer zapisany w studiu. Pieczątki zostaną na swoim miejscu.</p>' : ''}`;
+    fillInvite();
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => {
       installEvt.prompt();
@@ -129,7 +150,22 @@
   }
 
   // ---------- zakładanie karty ----------
+  // zaproszenie od koleżanki (imię dociąga się z bazy)
+  function inviteBox(text) {
+    return `<section class="panel panel--gold" style="gap:8px" id="invite"><span class="eyebrow eyebrow--gold" data-ref-name>Zaproszenie z polecenia</span><span class="strong" style="font-size:17px">Na pierwszy rytuał masz −10%</span><span class="small" style="color:var(--text-2)">${text}</span></section>`;
+  }
+  function fillInvite() {
+    if (!$('#invite')) return;
+    loadRefName().then((n) => {
+      const box = $('#invite');
+      if (!box) return;
+      if (n === '') { box.remove(); const f = $('#jPhoneL'); if (f) f.textContent = 'Telefon (opcjonalnie)'; return; }
+      if (n) box.querySelector('[data-ref-name]').textContent = 'Zaprasza Cię ' + n;
+    });
+  }
+
   function renderJoin(msg) {
+    const invited = !!RefStore.get();
     nav.hidden = true;
     document.getElementById('app').classList.remove('app--nav');
     main.innerHTML = `
@@ -141,6 +177,7 @@
       </div>
       <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
       ${msg ? '<p class="error" role="alert">' + esc(msg) + '</p>' : ''}
+      ${invited ? inviteBox('Załóż kartę poniżej i podaj swój numer telefonu. Rabat −10% zapisze się na karcie i naliczę go przy płatności. Rabat z polecenia jest dla nowych klientek.') : ''}
       <div class="panel">
         <span class="eyebrow eyebrow--gold">Masz już kartę?</span>
         <p class="lead" style="font-size:14px;margin:0">Wpisz numer telefonu zapisany na karcie, a wyślę Ci SMS z kodem. Pieczątki zostaną na swoim miejscu.</p>
@@ -149,7 +186,7 @@
       <form class="panel" id="joinForm" novalidate>
         <h2>Załóż swoją kartę</h2>
         <div class="field"><label for="jName">Imię i nazwisko</label><input class="input" id="jName" autocomplete="name" required placeholder="np. Anna Kowalska"></div>
-        <div class="field"><label for="jPhone">Telefon (opcjonalnie)</label><input class="input" id="jPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000"></div>
+        <div class="field"><label for="jPhone" id="jPhoneL">${invited ? 'Telefon (do rabatu z polecenia)' : 'Telefon (opcjonalnie)'}</label><input class="input" id="jPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000"></div>
         <div class="field">
           <span class="label" id="jBdayL">Data urodzin (do rabatu −20%)</span>
           <div class="split" role="group" aria-labelledby="jBdayL">
@@ -166,6 +203,7 @@
         <span class="eyebrow">Masz już kartę w studiu?</span>
         <p class="lead" style="font-size:14px">Jeśli kartę założyła Ci Justyna w studiu, nie zakładaj nowej. Zaloguj się kodem SMS na numer zapisany w studiu albo otwórz link z SMS-a. Pieczątki przejdą same.</p>
       </div>`;
+    fillInvite();
     $('#smsLoginBtn').addEventListener('click', () => renderSmsLogin());
     $('#joinForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -180,10 +218,14 @@
       if (!$('#jOk').checked) return fail('Zaznacz zgodę, aby założyć kartę.');
       const btn = $('#jBtn'); btn.disabled = true; btn.textContent = 'Zakładam…';
       try {
-        card = await Api.registerCard({ name, phone, day, month });
+        const ref = RefStore.get();
+        if (ref && phone.replace(/\D/g, '').length < 9) throw new Error('Podaj numer telefonu, aby dostać rabat −10% z polecenia.');
+        card = await Api.registerCard({ name, phone, day, month, ref });
         CardStore.set(card.token);
+        RefStore.clear();
         if (STANDALONE) Api.markAppOpen(card.token).catch(() => {});
         toast('Witaj, ' + firstName() + '! Twoja karta jest gotowa.');
+        try { card = (await Api.getMyCard(card.token)) || card; } catch (e) { /* karta z rejestracji wystarczy */ }
         go('card');
       } catch (ex) {
         fail(ex.message);
@@ -328,8 +370,18 @@
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
     const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
     const tiles = linkTiles();
+    const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
+    const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
+    const refer = `<section class="panel" style="gap:10px" aria-label="Poleć koleżance">
+        <span class="eyebrow eyebrow--gold">Poleć koleżance</span>
+        <span class="strong">Koleżanka dostaje −10% na pierwszy rytuał, a Ty pieczątkę, gdy do mnie przyjdzie.</span>
+        ${refCount ? `<span class="small">Zaproszone: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>` : ''}
+        ${card.bonus_stamps ? `<span class="small gold">Czeka na Ciebie ${card.bonus_stamps} ${UI.plural(card.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopiszę ${card.bonus_stamps > 1 ? 'je' : 'ją'} po Twoim najbliższym rytuale, żeby nie przepadł Ci rabat.</span>` : ''}
+        <button class="btn btn--line" id="referBtn">Wyślij zaproszenie</button>
+      </section>`;
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
+      ${welcome}
       ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span></button>' : ''}
       <section class="panel" aria-label="Karta rytuałów">
         <div class="row"><span class="eyebrow eyebrow--gold">Karta rytuałów</span><span class="strong" style="font-size:15px">${card.stamps} / 10</span></div>
@@ -344,14 +396,29 @@
       ${install}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
       ${review}
+      ${refer}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
       <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); });
     const pb = $('#pushBtn');
     if (pb) pb.addEventListener('click', enablePush);
+    const rb = $('#referBtn');
+    if (rb) rb.addEventListener('click', shareInvite);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
+  }
+
+  // zaproszenie: link z kodem karty, wysyłany z telefonu klientki (Messenger, SMS, WhatsApp…)
+  async function shareInvite() {
+    const url = new URL('./', location.href).href + '?p=' + encodeURIComponent(card.code);
+    const text = 'Zapraszam Cię do studia ' + CFG.STUDIO_NAME + '. Z mojego polecenia masz −10% na pierwszy rytuał. Załóż kartę rytuałów tutaj:';
+    if (navigator.share) {
+      try { await navigator.share({ title: CFG.STUDIO_NAME, text, url }); } catch (e) { /* zamknięte okno udostępniania */ }
+      return;
+    }
+    try { await navigator.clipboard.writeText(text + ' ' + url); toast('Skopiowałam zaproszenie. Wklej je koleżance w wiadomości.'); }
+    catch (e) { location.href = 'sms:?&body=' + encodeURIComponent(text + ' ' + url); }
   }
 
   // Kafelki z linkami (pokazują się tylko te, które mają adres w config.js)
@@ -480,7 +547,9 @@
       if (fresh.stamps > before) {
         const n = fresh.stamps;
         const d = Rules.discountFor(n);
-        toast(d ? 'Pieczątka nr ' + n + '! Ten rytuał: −' + d + '%' : 'Nowa pieczątka! Masz już ' + n + ' / 10.', d ? 'reward' : '');
+        const viaRef = (fresh.visits || [])[0] && fresh.visits[0].kind === 'referral';
+        if (viaRef) toast('Koleżanka była na rytuale. Masz pieczątkę za polecenie! Dziękuję!', 'reward');
+        else toast(d ? 'Pieczątka nr ' + n + '! Ten rytuał: −' + d + '%' : 'Nowa pieczątka! Masz już ' + n + ' / 10.', d ? 'reward' : '');
         screen = 'card';
         go('card');
         render(n);
