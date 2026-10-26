@@ -348,7 +348,7 @@
     on('#linkQrBtn', () => {
       const box = $('#linkQr');
       box.hidden = !box.hidden;
-      box.innerHTML = box.hidden ? '' : `<div class="qr-card">${UI.qrSvg(linkFor(c), { label: 'Kod do połączenia karty z aplikacją' })}<span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje ten kod aparatem w swoim telefonie. Otworzy się aplikacja z jej kartą.</span></div>`;
+      box.innerHTML = box.hidden ? '' : `<div class="qr-card">${UI.qrSvg(linkFor(c), { label: 'Kod do połączenia karty z aplikacją' })}<span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje ten kod aparatem w swoim telefonie i dodaje kartę do ekranu telefonu.</span></div>`;
     });
     on('#printBtn', () => printCard(c));
     $('#smsBtn').setAttribute('href', smsHref(c));
@@ -377,7 +377,7 @@
   function smsText(c) {
     const p = UI.progressText(c.stamps);
     return 'Dzień dobry, ' + c.name.split(' ')[0] + '! Na Twojej karcie rytuałów w studiu ' + CFG.STUDIO_NAME + ' masz ' + c.stamps + '/10 pieczątek. ' +
-      p.head.replace(/[.!]$/, '') + '. Twoja karta otworzy się w przeglądarce, bez logowania: ' + linkFor(c) + ' Możesz ją też dodać do ekranu telefonu jak aplikację. Do zobaczenia!';
+      p.head.replace(/[.!]$/, '') + '. Otwórz link i dodaj kartę do ekranu telefonu, potem otwieraj ją z ikony: ' + linkFor(c) + ' Do zobaczenia!';
   }
   function smsHref(c) {
     const num = (c.phone || '').replace(/[^\d+]/g, '');

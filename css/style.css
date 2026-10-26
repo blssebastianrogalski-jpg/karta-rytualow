@@ -171,6 +171,7 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 
 .install { border: 1px dashed var(--gold-dim); border-radius: var(--radius); padding: 14px 16px; display: flex; gap: 12px; align-items: center; font-size: 14px; color: var(--text-2); }
 .install b { color: var(--text); }
+.install__n { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--gold-dim); display: grid; place-items: center; font-weight: 600; color: var(--gold, #C9A24B); }
 
 .spinner { width: 34px; height: 34px; border: 3px solid var(--gold-dim); border-top-color: var(--gold); border-radius: 50%; animation: spin 1s linear infinite; margin: 40px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
