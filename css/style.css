@@ -216,3 +216,10 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 .pay button { min-height: 64px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .pay button[aria-checked="true"] { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
 .hint--error { border-color: #6B3A30; color: var(--danger); }
+
+/* Kafelki linków na karcie (strona, voucher, Facebook, Instagram) */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); text-decoration: none; font-size: 14.5px; line-height: 1.25; transition: border-color .15s, background .15s; }
+.tile:hover, .tile:active { border-color: var(--gold); background: var(--surface-2); color: var(--text); }
+.tile svg { width: 22px; height: 22px; color: var(--gold); flex: none; }
+.tile small { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
