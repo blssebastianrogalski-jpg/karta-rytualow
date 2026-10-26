@@ -12,6 +12,7 @@ window.APP_CONFIG = {
   INSTAGRAM_URL: 'https://www.instagram.com/jrtwojecialo',
   FACEBOOK_URL: 'https://fb.com/jrtwojecialo',
   WEBSITE_URL: 'https://twojecialotwojdobrostan.pl',
+  VOUCHER_URL: 'https://twojecialotwojdobrostan.pl/voucher-na-masaz-klucze/',
   GOOGLE_REVIEW_URL: 'https://g.page/r/CQM4lNka6sVNEBM/review',
   // Klucz publiczny VAPID do powiadomień push. Puste = przycisk ukryty.
   PUSH_PUBLIC_KEY: 'BMmiIwyPch5Ffp9O9CYb81HmMhVIsFrMJ4HesZMXJ1btYHOWiaXBz70A_Ijez4BR457jvdwwgWUPTA68MbrX2TM',

@@ -327,6 +327,7 @@
     const lastVisit = visits[0];
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
     const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
+    const tiles = linkTiles();
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
       ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span></button>' : ''}
@@ -339,17 +340,36 @@
       </section>
       ${next}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
+      ${tiles}
       ${install}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
       ${review}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
-      <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a><br><a href="${esc(CFG.INSTAGRAM_URL)}" target="_blank" rel="noopener">Instagram</a> · <a href="${esc(CFG.FACEBOOK_URL)}" target="_blank" rel="noopener">Facebook</a> · <a href="${esc(CFG.WEBSITE_URL)}" target="_blank" rel="noopener">Strona studia</a></p>`;
+      <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); });
     const pb = $('#pushBtn');
     if (pb) pb.addEventListener('click', enablePush);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
+  }
+
+  // Kafelki z linkami (pokazują się tylko te, które mają adres w config.js)
+  const TILE_ICONS = {
+    www: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.5 2.4 3.8 5.4 3.8 9s-1.3 6.6-3.8 9m0-18C9.5 5.4 8.2 8.4 8.2 12s1.3 6.6 3.8 9M3.5 9h17M3.5 15h17"/>',
+    voucher: '<path d="M4 9h16v11H4zM3 6h18v3H3zM12 6v14M12 6c-1.5-3-5-3.2-5-1.1C7 6 9.5 6 12 6Zm0 0c1.5-3 5-3.2 5-1.1C17 6 14.5 6 12 6Z"/>',
+    fb: '<path d="M14 8h3V4h-3c-2.8 0-4.5 1.8-4.5 4.6V11H7v4h2.5v6h4v-6H16l.6-4h-3.1V9c0-.6.4-1 1-1Z"/>',
+    ig: '<rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r=".6" fill="currentColor"/>'
+  };
+  function linkTiles() {
+    const items = [
+      [CFG.WEBSITE_URL, 'www', 'Odwiedź stronę', 'rytuały i o mnie'],
+      [CFG.VOUCHER_URL, 'voucher', 'Kup voucher', 'prezent dla bliskiej osoby'],
+      [CFG.FACEBOOK_URL, 'fb', 'Facebook', 'nowości i promocje'],
+      [CFG.INSTAGRAM_URL, 'ig', 'Instagram', 'kulisy rytuałów']
+    ].filter((t) => t[0]);
+    if (!items.length) return '';
+    return `<nav class="tiles" aria-label="Odkryj więcej">${items.map(([url, icon, title, sub]) => `<a class="tile" href="${esc(url)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${TILE_ICONS[icon]}</svg><span>${title}<small>${sub}</small></span></a>`).join('')}</nav>`;
   }
 
   // „Jutro, 10:30” / „wtorek, 3 listopada, 15:00” (czas polski)
