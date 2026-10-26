@@ -63,6 +63,7 @@
       CardStore.clear();
       return renderJoin('Nie znalazłam tej karty. Załóż nową albo poproś w studiu o link do swojej karty.');
     }
+    if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
     if (linkToken) toast('Witaj, ' + firstName() + '! Twoja karta jest już w aplikacji.');
     go(location.hash.replace('#', '') || 'card');
   }
@@ -181,6 +182,7 @@
       try {
         card = await Api.registerCard({ name, phone, day, month });
         CardStore.set(card.token);
+        if (STANDALONE) Api.markAppOpen(card.token).catch(() => {});
         toast('Witaj, ' + firstName() + '! Twoja karta jest gotowa.');
         go('card');
       } catch (ex) {
