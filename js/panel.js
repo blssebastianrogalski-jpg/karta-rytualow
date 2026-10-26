@@ -205,11 +205,18 @@
     }));
   }
 
+  // kto ma kartę w aplikacji (otwartą z ikony); null = baza jeszcze bez tej funkcji, wtedy jak dawniej
+  let appMap = null;
+  async function loadAppStatus() {
+    try { appMap = await Api.appStatus(); } catch (e) { appMap = null; }
+  }
+  const hasApp = (c) => appMap ? !!appMap[c.id] : c.source !== 'studio';
+
   async function loadList() {
     const box = $('#list');
     if (!box) return;
     let list;
-    try { list = await Api.listCards(query); } catch (e) { box.innerHTML = '<p class="error" style="padding:12px">' + esc(e.message) + '</p>'; return; }
+    try { [list] = await Promise.all([Api.listCards(query), loadAppStatus()]); } catch (e) { box.innerHTML = '<p class="error" style="padding:12px">' + esc(e.message) + '</p>'; return; }
     const y = Rules.todayPL().y;
     const bdays = list.filter((c) => c.bday_today);
     const bBox = $('#bdays');
@@ -218,8 +225,9 @@
       bBox.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
     }
     if (!list.length) { box.innerHTML = '<p class="small" style="padding:14px 4px">' + (query ? 'Brak klientek o tej nazwie.' : 'Nie ma jeszcze żadnych kart.') + '</p>'; return; }
-    box.innerHTML = list.map((c) => {
-      const tag = (c.bday_today ? ' · urodziny dziś' : c.stamps === 4 ? ' · następna −15%' : c.stamps === 9 ? ' · następna −30%' : c.stamps >= 10 ? ' · karta pełna' : '') + (c.source === 'studio' ? ' · bez aplikacji' : '');
+    const appCount = appMap && !query ? `<p class="small" style="padding:10px 4px 2px;margin:0">Aplikację ma ${list.filter(hasApp).length} z ${list.length} klientek.</p>` : '';
+    box.innerHTML = appCount + list.map((c) => {
+      const tag = (c.bday_today ? ' · urodziny dziś' : c.stamps === 4 ? ' · następna −15%' : c.stamps === 9 ? ' · następna −30%' : c.stamps >= 10 ? ' · karta pełna' : '') + (hasApp(c) ? '' : ' · bez aplikacji');
       return `<div class="client">
         <button class="client__main" data-open="${esc(c.id)}">
           <span class="avatar">${esc(UI.initials(c.name))}</span>
@@ -263,7 +271,7 @@
         if (p && p.status !== 'planned') currentPlan = null;
       } catch (e) { /* bez planu */ }
     }
-    try { current = await Api.getCard(id); } catch (e) { return fail(e); }
+    try { [current] = await Promise.all([Api.getCard(id), loadAppStatus()]); } catch (e) { return fail(e); }
     if (!current) return toast('Nie znaleziono karty.', 'error');
     renderCard();
   }
@@ -279,7 +287,7 @@
       ${bar(c.name)}
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:-8px">
         <span class="tag">KARTA ${esc(c.code)}</span>
-        ${c.source === 'studio' ? '<span class="tag">bez aplikacji</span>' : '<span class="tag">w aplikacji</span>'}
+        ${hasApp(c) ? '<span class="tag tag--solid">ma aplikację' + (appMap && appMap[c.id] ? ' · ostatnio ' + esc(UI.fmtShort(appMap[c.id].last)) : '') + '</span>' : '<span class="tag">bez aplikacji</span>'}
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
       </div>
       ${currentPlan ? '<p class="small gold" style="margin:0">Wizyta z planu dnia. Po zapisaniu odhaczy się w planie.</p>' : ''}
@@ -302,7 +310,7 @@
       </div>
       <section class="panel">
         <span class="eyebrow">Karta w telefonie klientki</span>
-        <p class="small" style="margin:0">${c.source === 'studio' ? 'Klientka nie ma jeszcze aplikacji. Wyślij jej SMS z linkiem: gdy go otworzy, karta połączy się z aplikacją razem ze wszystkimi pieczątkami.' : 'Link przyda się, gdy klientka zmieni telefon albo usunie aplikację.'}</p>
+        <p class="small" style="margin:0">${!hasApp(c) ? 'Klientka nie ma jeszcze aplikacji. Wyślij jej SMS z linkiem: gdy go otworzy, karta połączy się z aplikacją razem ze wszystkimi pieczątkami.' : 'Link przyda się, gdy klientka zmieni telefon albo usunie aplikację.'}</p>
         <a class="btn btn--line" id="smsBtn" href="#">Wyślij SMS ze stanem karty</a>
         <div class="btn-row">
           <button class="btn btn--ghost btn--sm" id="linkQrBtn">Pokaż kod do połączenia</button>

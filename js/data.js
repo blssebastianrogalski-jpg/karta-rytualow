@@ -143,6 +143,13 @@
         return c ? view(c) : null;
       }),
       cardByLink: (code) => run(() => { const c = load().cards.find((x) => x.link_code === code); return c ? c.token : null; }),
+      markAppOpen: (token) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        if (c) { const now = new Date().toISOString(); c.app_opened_at = c.app_opened_at || now; c.app_seen_at = now; save(db); }
+      }),
+      appStatus: () => run(() => {
+        guard(); const m = {}; load().cards.forEach((c) => { if (c.app_opened_at) m[c.id] = { first: c.app_opened_at, last: c.app_seen_at }; }); return m;
+      }),
       // pokaz logowania kodem SMS: kod to zawsze 123456
       smsLoginSend: (phone) => run(() => {
         if ((phone || '').replace(/\D/g, '').length < 9) throw new Error('Wpisz numer komórki, np. 600 000 000.');
@@ -361,6 +368,7 @@
       demo: false,
       registerCard: ({ name, phone, day, month }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
+      markAppOpen: (token) => rpc('mark_app_open', { p_token: token }),
       cardByLink: (code) => rpc('card_by_link', { p_code: code }),
       // logowanie do karty kodem SMS (funkcja kod-sms)
       smsLoginSend: (phone) => invoke('kod-sms', { action: 'send', phone }),
@@ -391,6 +399,7 @@
       findCard: (code) => rpc('find_card', { p_code: code }),
       getCard: (id) => rpc('get_card', { p_id: id }),
       listCards: (q) => rpc('list_cards', { p_query: q || '' }),
+      appStatus: () => rpc('cards_app_status', {}),
       createStudioCard: ({ name, phone, email, day, month, stamps }) => rpc('create_studio_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_stamps: stamps || 0, p_email: email || null }),
       updateCard: (id, f) => rpc('update_card', { p_id: id, p_name: f.name, p_phone: f.phone || null, p_day: f.day || null, p_month: f.month || null, p_note: f.note || null, p_email: f.email || '' }),
       recordVisit: (id, mode, service, planId) => rpc('record_visit', { p_id: id, p_mode: mode, p_service: service || null, p_plan_id: planId || null }),
