@@ -372,13 +372,11 @@
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
-    const refer = `<section class="panel" style="gap:10px" aria-label="Poleć koleżance">
-        <span class="eyebrow eyebrow--gold">Poleć koleżance</span>
-        <span class="strong">Koleżanka dostaje −10% na pierwszy rytuał, a Ty pieczątkę, gdy do mnie przyjdzie.</span>
-        ${refCount ? `<span class="small">Zaproszone: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>` : ''}
+    const refer = refCount || card.bonus_stamps ? `<section class="panel" style="gap:8px" aria-label="Twoje polecenia">
+        <span class="eyebrow eyebrow--gold">Twoje polecenia</span>
+        <span class="small">Zaproszone koleżanki: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>
         ${card.bonus_stamps ? `<span class="small gold">Czeka na Ciebie ${card.bonus_stamps} ${UI.plural(card.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopiszę ${card.bonus_stamps > 1 ? 'je' : 'ją'} po Twoim najbliższym rytuale, żeby nie przepadł Ci rabat.</span>` : ''}
-        <button class="btn btn--line" id="referBtn">Wyślij zaproszenie</button>
-      </section>`;
+      </section>` : '';
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
       ${welcome}
@@ -426,17 +424,19 @@
     www: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.5 2.4 3.8 5.4 3.8 9s-1.3 6.6-3.8 9m0-18C9.5 5.4 8.2 8.4 8.2 12s1.3 6.6 3.8 9M3.5 9h17M3.5 15h17"/>',
     voucher: '<path d="M4 9h16v11H4zM3 6h18v3H3zM12 6v14M12 6c-1.5-3-5-3.2-5-1.1C7 6 9.5 6 12 6Zm0 0c1.5-3 5-3.2 5-1.1C17 6 14.5 6 12 6Z"/>',
     fb: '<path d="M14 8h3V4h-3c-2.8 0-4.5 1.8-4.5 4.6V11H7v4h2.5v6h4v-6H16l.6-4h-3.1V9c0-.6.4-1 1-1Z"/>',
-    ig: '<rect x="3.5" y="3.5" width="17" height="17" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r=".6" fill="currentColor"/>'
+    refer: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M18 8v6M15 11h6"/>'
   };
   function linkTiles() {
     const items = [
       [CFG.WEBSITE_URL, 'www', 'Odwiedź stronę', 'rytuały i o mnie'],
       [CFG.VOUCHER_URL, 'voucher', 'Kup voucher', 'prezent dla bliskiej osoby'],
       [CFG.FACEBOOK_URL, 'fb', 'Facebook', 'nowości i promocje'],
-      [CFG.INSTAGRAM_URL, 'ig', 'Instagram', 'kulisy rytuałów']
+      ['#refer', 'refer', 'Poleć koleżance', '−10% dla niej, pieczątka dla Ciebie']
     ].filter((t) => t[0]);
-    if (!items.length) return '';
-    return `<nav class="tiles" aria-label="Odkryj więcej">${items.map(([url, icon, title, sub]) => `<a class="tile" href="${esc(url)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${TILE_ICONS[icon]}</svg><span>${title}<small>${sub}</small></span></a>`).join('')}</nav>`;
+    const svg = (icon) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${TILE_ICONS[icon]}</svg>`;
+    return `<nav class="tiles" aria-label="Odkryj więcej">${items.map(([url, icon, title, sub]) => url === '#refer'
+      ? `<button class="tile" id="referBtn">${svg(icon)}<span>${title}<small>${sub}</small></span></button>`
+      : `<a class="tile" href="${esc(url)}" target="_blank" rel="noopener">${svg(icon)}<span>${title}<small>${sub}</small></span></a>`).join('')}</nav>`;
   }
 
   // „Jutro, 10:30” / „wtorek, 3 listopada, 15:00” (czas polski)
