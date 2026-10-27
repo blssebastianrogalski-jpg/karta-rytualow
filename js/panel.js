@@ -96,6 +96,7 @@
       </button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
+      <div id="reqs"></div>
       <div id="bdays"></div>
       <div id="refs"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
@@ -140,6 +141,98 @@
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
     loadRefs().then(loadPlan);
     loadList();
+    loadRequests();
+  }
+
+  // ---------- prośby o termin (klientki bez Booksy) ----------
+  const PART = { any: 'dowolna pora', morning: 'rano (do 12:00)', midday: 'w południe (12–16)', evening: 'po 16:00' };
+  const REQ_STATUS = { confirmed: 'potwierdzona', declined: 'nie pasowało', cancelled: 'anulowana przez klientkę' };
+  let requests = [];
+  async function loadRequests() {
+    const box = $('#reqs');
+    try { requests = await Api.requestsList(); } catch (e) { requests = []; } // baza jeszcze bez próśb o termin
+    if (!box) return;
+    const open = requests.filter((r) => r.status === 'new');
+    const done = requests.filter((r) => r.status !== 'new');
+    if (!requests.length) { box.innerHTML = ''; return; }
+    const when = (r) => dateLabel(r.pref_day) + ', ' + (r.pref_time ? 'ok. ' + r.pref_time : PART[r.pref_part]);
+    const tel = (r) => r.phone.replace(/[^\d+]/g, '');
+    box.innerHTML = `
+      ${open.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
+        <span class="eyebrow eyebrow--gold">${open.length === 1 ? 'Nowa prośba o termin' : 'Prośby o termin: ' + open.length}</span>
+        ${open.map((r, i) => `<div style="display:flex;flex-direction:column;gap:4px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
+          <button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(r.card_id)}">${esc(r.name)} <span class="small">· ${r.stamps}/10</span></button>
+          <span class="strong gold">${esc(when(r))}</span>
+          <span class="small" style="color:var(--text-2)">${esc(r.service || 'rytuał do ustalenia')} · ${esc(r.phone)} · wysłana ${esc(UI.fmtShort(r.created_at))}</span>
+          ${r.message ? `<span class="small" style="color:var(--text);font-style:italic">„${esc(r.message)}”</span>` : ''}
+          <div class="btn-row" style="margin-top:4px">
+            <a class="btn btn--line btn--sm" href="tel:${esc(tel(r))}">Zadzwoń</a>
+            <a class="btn btn--line btn--sm" href="${esc(reqSms(r))}">SMS</a>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn--gold btn--sm" data-req-ok="${r.id}">Potwierdź termin</button>
+            <button class="btn btn--ghost btn--sm" data-req-no="${r.id}">Nie pasuje</button>
+          </div>
+        </div>`).join('')}
+      </div>` : ''}
+      ${done.length ? `<details class="panel" style="padding:14px 16px;gap:8px">
+        <summary class="eyebrow" style="cursor:pointer">Prośby o termin · załatwione (14 dni): ${done.length}</summary>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((r) => `<button class="list-row" data-open="${esc(r.card_id)}" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line-soft);color:inherit;text-align:left;padding:10px 0;flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(r.name)}</span><span class="small">${r.status === 'confirmed' ? esc(dateLabel(dayOf(r.confirmed_at)) + ', ' + hhmm(r.confirmed_at)) : esc(when(r))} · ${REQ_STATUS[r.status]}</span></button>`).join('')}</div>
+      </details>` : ''}`;
+    box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
+    box.querySelectorAll('[data-req-ok]').forEach((b) => b.addEventListener('click', () => openConfirm(requests.find((r) => r.id === +b.dataset.reqOk))));
+    box.querySelectorAll('[data-req-no]').forEach((b) => b.addEventListener('click', () => openDecline(requests.find((r) => r.id === +b.dataset.reqNo))));
+    if (location.hash === '#prosby' && open.length) { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
+  }
+  const dayOf = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Warsaw' });
+  const hhmm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+  function reqSms(r) {
+    const text = 'Dzień dobry, ' + r.name.split(' ')[0] + '! Dziękuję za prośbę o termin w studiu ' + CFG.STUDIO_NAME +
+      (r.service ? ' (' + r.service + ')' : '') + '. ';
+    return 'sms:' + r.phone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(text);
+  }
+
+  // potwierdzenie: dzień i godzina trafiają do planu dnia, klientka dostaje powiadomienie
+  function openConfirm(r) {
+    const services = CFG.SERVICES.map((x) => `<option${x === r.service ? ' selected' : ''}>${esc(x)}</option>`).join('');
+    openSheet(`${bar('Potwierdź termin')}
+      <p class="lead" style="margin-top:-8px">${esc(r.name)} prosi o: ${esc(dateLabel(r.pref_day))}, ${esc(r.pref_time ? 'ok. ' + r.pref_time : PART[r.pref_part])}.</p>
+      <form class="panel" id="okForm">
+        <div class="split">
+          <div class="field"><label for="okDay">Dzień</label><input class="input" id="okDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${esc(r.pref_day < Rules.dayPL(0) ? Rules.dayPL(0) : r.pref_day)}"></div>
+          <div class="field"><label for="okTime">Godzina</label><input class="input" id="okTime" type="time" step="900" value="${esc(r.pref_time || '')}" required></div>
+        </div>
+        <div class="field"><label for="okSvc">Rytuał</label><select class="input" id="okSvc"><option value="">${esc(r.service || 'do ustalenia')}</option>${services}</select></div>
+        <p class="small" style="margin:0">Wizyta wejdzie do planu dnia, a klientka zobaczy ją na karcie i dostanie powiadomienie. <b>Wpisz ten termin także w Booksy</b>, żeby nikt inny go nie zarezerwował.</p>
+        <p class="error" id="okErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit">Potwierdź</button>
+      </form>`);
+    $('#okForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await Api.requestConfirm(r.id, $('#okDay').value, $('#okTime').value, $('#okSvc').value || r.service);
+        toast('Termin potwierdzony i dodany do planu.');
+        closeSheet(); loadRequests();
+      } catch (ex) { const el = $('#okErr'); el.textContent = ex.message; el.hidden = false; }
+    });
+  }
+
+  function openDecline(r) {
+    openSheet(`${bar('Termin nie pasuje')}
+      <p class="lead" style="margin-top:-8px">${esc(r.name)} · ${esc(dateLabel(r.pref_day))}. Odpowiedź zobaczy na karcie i w powiadomieniu.</p>
+      <form class="panel" id="noForm">
+        <div class="field"><label for="noMsg">Odpowiedź dla klientki</label><textarea class="input" id="noMsg" rows="3" maxlength="300">Ten termin jest już zajęty. Wolne mam np. </textarea></div>
+        <p class="error" id="noErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit">Wyślij odpowiedź</button>
+      </form>`);
+    $('#noForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await Api.requestDecline(r.id, $('#noMsg').value);
+        toast('Odpowiedź wysłana.');
+        closeSheet(); loadRequests();
+      } catch (ex) { const el = $('#noErr'); el.textContent = ex.message; el.hidden = false; }
+    });
   }
 
   // ---------- program poleceń ----------
