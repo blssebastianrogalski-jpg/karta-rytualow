@@ -6,6 +6,7 @@
   const nav = $('#nav');
   let card = null;
   let requests = [];       // prośby o termin (dla klientek bez Booksy)
+  let retryOf = null;      // „inny dzień” po propozycji wolnych godzin
   let screen = 'card';
   let poll = null;
   let installEvt = null;
@@ -422,9 +423,11 @@
     if (gw) gw.addEventListener('click', addToGoogleWallet);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
-    $('#reqBtn').addEventListener('click', () => go('req'));
+    $('#reqBtn').addEventListener('click', () => { retryOf = null; go('req'); });
     main.querySelectorAll('[data-req-cancel]').forEach((b) => b.addEventListener('click', () => cancelRequest(+b.dataset.reqCancel)));
-    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => go('req')));
+    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; go('req'); }));
+    main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; go('req'); }));
+    main.querySelectorAll('[data-req-pick]').forEach((b) => b.addEventListener('click', () => pickSlot(+b.dataset.reqPick, b.dataset.at)));
   }
 
   // ---------- prośba o termin (dla klientek bez Booksy) ----------
@@ -435,15 +438,28 @@
     try { requests = (await Api.myRequests(CardStore.get())) || []; } catch (e) { requests = []; } // baza jeszcze bez próśb
   }
 
-  // prośby czekające i odpowiedzi „termin nie pasuje” (potwierdzone są już w „najbliższych wizytach”)
+  // prośby czekające, propozycje wolnych godzin i odpowiedzi „termin nie pasuje” (potwierdzone są już w „najbliższych wizytach”)
+  const slotLabel = (iso) => dayName(dayOf(iso)) + ', ' + new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
   function requestsBox() {
     const open = requests.filter((r) => r.status === 'new');
     const declined = requests.filter((r) => r.status === 'declined');
-    if (!open.length && !declined.length) return '';
+    const suggested = requests.filter((r) => r.status === 'suggested');
+    if (!open.length && !declined.length && !suggested.length) return '';
     const when = (r) => dayName(r.pref_day) + ', ' + (r.pref_time ? 'ok. ' + r.pref_time : PART[r.pref_part]);
-    return `<section class="panel${declined.length ? ' panel--gold' : ''}" style="gap:8px" aria-label="Prośby o termin">
+    const sug = suggested.map((r) => `<section class="panel panel--gold" style="gap:8px" aria-label="Wolne godziny">
+        <span class="eyebrow eyebrow--gold">Ten termin jest zajęty</span>
+        <span class="small" style="color:var(--text-2)">${esc(r.service || 'Rytuał')} · ${esc(when(r))}</span>
+        <span class="strong">Najbliższe wolne godziny. Wybierz jedną, a potwierdzę ją:</span>
+        ${(r.suggestions || []).map((iso) => `<button class="btn btn--line btn--sm" data-req-pick="${r.id}" data-at="${esc(iso)}">${esc(slotLabel(iso).replace(/^./, (ch) => ch.toUpperCase()))}</button>`).join('')}
+        <div class="btn-row" style="margin-top:2px">
+          <button class="btn btn--ghost btn--sm" data-req-retry="${r.id}">Inny dzień</button>
+          <button class="btn btn--ghost btn--sm" data-req-cancel="${r.id}">Anuluj</button>
+        </div>
+      </section>`).join('');
+    if (!open.length && !declined.length) return sug;
+    return sug + `<section class="panel${declined.length ? ' panel--gold' : ''}" style="gap:8px" aria-label="Prośby o termin">
       ${open.map((r, i) => `<div style="display:flex;flex-direction:column;gap:3px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}">
-        <span class="eyebrow eyebrow--gold">Prośba o termin · czeka na potwierdzenie</span>
+        <span class="eyebrow eyebrow--gold">Prośba o termin · ${r.attempt === 2 ? 'sprawdzę i odezwę się' : 'czeka na potwierdzenie'}</span>
         <span class="strong">${esc(when(r))}</span>
         <span class="small" style="color:var(--text-2)">${esc(r.service || 'Rytuał do ustalenia')} · oddzwonię na ${esc(r.phone)}</span>
         <button class="linkbtn" data-req-cancel="${r.id}" style="align-self:flex-start;color:var(--muted)">Anuluj prośbę</button>
@@ -455,6 +471,15 @@
         <button class="btn btn--line btn--sm" data-req-again="1" style="margin-top:4px">Poproś o inny termin</button>
       </div>`).join('')}
     </section>`;
+  }
+
+  async function pickSlot(id, at) {
+    try {
+      const r = await Api.requestPick(CardStore.get(), id, at);
+      toast(r.conflict ? 'Ta godzina właśnie się zajęła. Sprawdzę i odezwę się.' : 'Dziękuję! Potwierdzę ' + slotLabel(at) + '.', 'reward');
+    } catch (e) { toast(e.message, 'error'); }
+    await loadRequests();
+    render();
   }
 
   async function cancelRequest(id) {
@@ -470,7 +495,7 @@
     main.innerHTML = `
       <button class="back" id="reqBack">‹ Karta</button>
       <h1>Poproś o termin</h1>
-      <p class="lead" style="margin-top:-6px">Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.</p>
+      <p class="lead" style="margin-top:-6px">${retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}">${esc(x)}</option>`).join('')}</select></div>
         <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}"></div>
@@ -485,7 +510,7 @@
       </form>
       <p class="small center">To jeszcze nie rezerwacja. Termin jest Twój, gdy go potwierdzę. Szybciej: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     let part = 'any';
-    $('#reqBack').addEventListener('click', () => go('card'));
+    $('#reqBack').addEventListener('click', () => { retryOf = null; go('card'); });
     $('#rParts').addEventListener('click', (e) => {
       const b = e.target.closest('[data-part]'); if (!b) return;
       part = b.dataset.part;
@@ -494,14 +519,16 @@
     $('#reqForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = $('#rErr');
-      const f = { service: $('#rService').value, day: $('#rDay').value, part, time: $('#rTime').value, phone: $('#rPhone').value.trim(), message: $('#rMsg').value };
+      const f = { service: $('#rService').value, day: $('#rDay').value, part, time: $('#rTime').value, phone: $('#rPhone').value.trim(), message: $('#rMsg').value, retryOf };
       if (!f.day) { err.textContent = 'Wybierz dzień.'; err.hidden = false; return; }
       if (f.phone.replace(/\D/g, '').length < 9) { err.textContent = 'Podaj numer telefonu, żebym mogła oddzwonić.'; err.hidden = false; return; }
       const btn = $('#rBtn'); btn.disabled = true; btn.textContent = 'Wysyłam…';
       try {
-        await Api.requestCreate(CardStore.get(), f);
+        const r = await Api.requestCreate(CardStore.get(), f);
+        retryOf = null;
         await loadRequests();
-        toast('Prośba wysłana. Odezwę się, żeby potwierdzić termin.', 'reward');
+        if (r.status === 'suggested') toast('Ten termin jest zajęty. Wybierz jedną z wolnych godzin.');
+        else toast('Prośba wysłana. Odezwę się, żeby potwierdzić termin.', 'reward');
         go('card');
       } catch (ex) {
         err.textContent = ex.message; err.hidden = false;

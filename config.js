@@ -29,10 +29,12 @@ window.APP_CONFIG = {
     'Head SPA Premium',
     'Access Bars®',
     'Refleksologia Stóp Premium',
-    'Masaż relaksacyjny',
-    'Masaż aromaterapeutyczny',
+    'Masaż relaksacyjny 60 min',
+    'Masaż relaksacyjny 90 min',
+    'Masaż aromaterapeutyczny 60 min',
+    'Masaż aromaterapeutyczny 90 min',
     'Masaż gorącą świecą',
     'Masaż głowy, karku i obręczy barkowej',
-    'Masaż transbukalny'
+    'Ukojenie Dla Żuchwy i Twarzy'
   ]
 };
