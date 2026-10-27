@@ -97,13 +97,13 @@
   }
 
   // Potwierdzenie w oknie aplikacji (zamiast systemowego confirm)
-  function ask(text, okLabel) {
+  function ask(text, okLabel, single) {
     return new Promise((resolve) => {
       const wrap = document.createElement('div');
       wrap.className = 'ask';
       wrap.setAttribute('role', 'alertdialog');
       wrap.setAttribute('aria-modal', 'true');
-      wrap.innerHTML = '<div class="ask__box"><p>' + esc(text) + '</p><div class="btn-row"><button class="btn btn--ghost" data-a="0">Anuluj</button><button class="btn btn--gold" data-a="1">' + esc(okLabel || 'Tak') + '</button></div></div>';
+      wrap.innerHTML = '<div class="ask__box"><p>' + esc(text) + '</p><div class="btn-row">' + (single ? '' : '<button class="btn btn--ghost" data-a="0">Anuluj</button>') + '<button class="btn btn--gold" data-a="1">' + esc(okLabel || 'Tak') + '</button></div></div>';
       document.body.appendChild(wrap);
       const done = (v) => { wrap.remove(); resolve(v); };
       wrap.addEventListener('click', (e) => { const b = e.target.closest('[data-a]'); if (b) done(b.dataset.a === '1'); else if (e.target === wrap) done(false); });

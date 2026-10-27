@@ -28,6 +28,7 @@
     package_buy: 'Zakup pakietu',
     package_visit: 'Wizyta z pakietu',
     birthday: 'Rytuał urodzinowy −20%',
+    referral: 'Pieczątka za polecenie',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
@@ -96,6 +97,7 @@
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="bdays"></div>
+      <div id="refs"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="row"><span class="eyebrow" id="planTitle">Plan dnia · ${dayLabel(planDay)}</span></div>
         <div class="tabs tabs--small tabs--three" role="tablist" aria-label="Dzień planu">
@@ -136,8 +138,37 @@
     const opb = $('#ownerPushBtn');
     if (opb) opb.addEventListener('click', enableOwnerPush);
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
-    loadPlan();
+    loadRefs().then(loadPlan);
     loadList();
+  }
+
+  // ---------- program poleceń ----------
+  // refs: lista poleceń z bazy; refWelcome: karty z czekającym −10% (znaczek w planie dnia)
+  let refs = [], refWelcome = new Set();
+  const REF_SEEN = 'tctd.refSeen';
+  const refSeen = () => { try { return localStorage.getItem(REF_SEEN) || ''; } catch (e) { return ''; } };
+  async function loadRefs() {
+    try { refs = await Api.referralsList(); } catch (e) { refs = []; } // baza jeszcze bez programu poleceń
+    refWelcome = new Set(refs.filter((r) => r.ref_welcome).map((r) => r.id));
+    const box = $('#refs');
+    if (!box || !refs.length) { if (box) box.innerHTML = ''; return; }
+    const seen = refSeen();
+    const fresh = refs.filter((r) => !seen || r.created_at > seen);
+    const status = (r) => !r.ref_rewarded_at ? '<span class="gold">czeka na 1. wizytę · −10%</span>'
+      : 'była ✓ · pieczątka dla ' + esc(r.referrer_name.split(/\s+/)[0]) + (r.ref_welcome ? ' · −10% jeszcze na pojedynczy rytuał' : '');
+    box.innerHTML = `
+      ${fresh.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:8px">
+        <span class="eyebrow eyebrow--gold">${fresh.length === 1 ? 'Nowa karta z polecenia' : 'Nowe karty z polecenia: ' + fresh.length}</span>
+        ${fresh.map((r) => `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text)" data-open="${esc(r.id)}"><b>${esc(r.name)}</b> · poleciła ją ${esc(r.referrer_name)} · <span class="gold">pierwszy rytuał −10%</span></button>`).join('')}
+        <button class="btn btn--line btn--sm" id="refSeenBtn">OK, widzę</button>
+      </div>` : ''}
+      <details class="panel" style="padding:14px 16px;gap:8px">
+        <summary class="eyebrow" style="cursor:pointer">Program poleceń · ${refs.length} ${UI.plural(refs.length, 'polecenie', 'polecenia', 'poleceń')}${refWelcome.size ? ' · ' + refWelcome.size + ' z −10%' : ''}</summary>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${refs.map((r) => `<button class="list-row" data-open="${esc(r.id)}" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line-soft);color:inherit;text-align:left;padding:10px 0;flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(r.name)} <span class="small">← ${esc(r.referrer_name)}</span></span><span class="small">${UI.fmtShort(r.created_at)} · ${status(r)}</span></button>`).join('')}</div>
+      </details>`;
+    box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
+    const sb = $('#refSeenBtn');
+    if (sb) sb.addEventListener('click', () => { try { localStorage.setItem(REF_SEEN, refs[0].created_at); } catch (e) { /* ignore */ } loadRefs(); });
   }
 
   // Powiadomienia dla studia (dzień w studiu, urodziny) na tym telefonie.
@@ -171,7 +202,8 @@
     const row = (p) => {
       const done = p.status !== 'planned';
       const tags = (p.booking_id ? ' <span class="tag">Booksy</span>' : '') + (p.conflict ? ' <span class="tag">kolizja</span>' : '') +
-        (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '');
+        (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '') +
+        (refWelcome.has(p.card_id) && !done ? ' <span class="tag tag--solid">z polecenia −10%</span>' : '');
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : '') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
@@ -291,6 +323,7 @@
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
       </div>
       ${currentPlan ? '<p class="small gold" style="margin:0">Wizyta z planu dnia. Po zapisaniu odhaczy się w planie.</p>' : ''}
+      ${c.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${c.referred_by_name ? ' · ' + esc(c.referred_by_name) : ''}</span><span class="strong">Pierwszy pojedynczy rytuał −10%</span><span class="small" style="color:var(--text-2)">Rabat zapisze się sam przy „Pojedynczy rytuał”. Polecająca dostanie pieczątkę po tej wizycie.</span></section>` : ''}
       ${bdayAvail ? `<section class="panel panel--gold bday-today" style="gap:10px"><span class="eyebrow eyebrow--gold">Urodziny dziś · −20%</span><span class="small" style="color:var(--text-2)">Rabat urodzinowy na dzisiejszy rytuał. Nie łączy się z innymi promocjami, więc nie dodaje pieczątki.</span><button class="btn btn--gold" id="bdayBtn">Rytuał urodzinowy −20%</button></section>` : ''}
       <section class="panel">
         <div class="row"><span class="eyebrow eyebrow--gold">Karta rytuałów</span><span class="strong gold" style="font-size:16px">${c.stamps} / 10</span></div>
@@ -324,6 +357,9 @@
         <div class="row"><span class="small">Telefon</span><span>${c.phone ? `<a href="tel:${esc(c.phone.replace(/\s/g, ''))}">${esc(c.phone)}</a>` : '—'}</span></div>
         <div class="row"><span class="small">Urodziny</span><span>${esc(UI.fmtBday(c.bday_day, c.bday_month) || '—')}${c.birthday_used_year === y ? ' <span class="tag">wykorzystane ' + y + '</span>' : ''}</span></div>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
+        ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : ''}
+        ${c.ref_count ? `<div class="row"><span class="small">Poleciła</span><span>${c.ref_count} ${UI.plural(c.ref_count, 'osobę', 'osoby', 'osób')}${c.ref_rewarded < c.ref_count ? ' · ' + (c.ref_count - c.ref_rewarded) + ' przed wizytą' : ''}</span></div>` : ''}
+        ${c.bonus_stamps ? `<div class="hint">Czeka ${c.bonus_stamps} ${UI.plural(c.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopisze się sama po najbliższej wizycie (nie zajmuje kratki z rabatem).</div>` : ''}
         ${c.cards_completed ? `<div class="row"><span class="small">Ukończone karty</span><span>${c.cards_completed}</span></div>` : ''}
         ${c.note ? `<div class="hint">${esc(c.note)}</div>` : ''}
         <button class="btn btn--ghost btn--sm" id="editBtn">Edytuj dane</button>
@@ -342,7 +378,7 @@
       try { current = await Api.removeStamp(c.id); toast('Cofnięto pieczątkę (' + current.stamps + '/10).'); renderCard(); } catch (e) { fail(e); }
     });
     on('#bdayBtn', async () => {
-      try { current = await Api.useBirthday(c.id, svc(), currentPlan); currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); } catch (e) { fail(e); }
+      try { current = await Api.useBirthday(c.id, svc(), currentPlan); current = (await Api.getCard(c.id).catch(() => null)) || current; currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); if (c.referred_by_name && !(c.visits || []).length) refReward(c); } catch (e) { fail(e); }
     });
     document.querySelectorAll('[data-plan-btn]').forEach((b) => b.addEventListener('click', async () => {
       const o = +b.dataset.planBtn;
@@ -370,16 +406,33 @@
     btn.disabled = true;
     try {
       current = await Api.recordVisit(c.id, mode, service, currentPlan);
+      current = (await Api.getCard(c.id).catch(() => null)) || current; // pieczątki za polecenie dopisuje baza
       if (mode !== 'package_visit') Api.notifyStamp(c.id, current.stamps).catch(() => {});
       if (service) lastService = service;
       currentPlan = null;
       const first = c.name.split(' ')[0];
       if (mode === 'package_visit') toast('Zapisano wizytę z pakietu (bez pieczątki).');
+      else if (mode === 'stamp' && c.ref_welcome && n !== 5 && n !== 10) toast('Pierwszy rytuał z polecenia ' + first + ': nalicz rabat −10%.', 'reward');
       else if (n === 5) toast('5. rytuał ' + first + ': nalicz rabat −15%.', 'reward');
       else if (n === 10) toast('10. rytuał ' + first + ': nalicz rabat −30%.', 'reward');
       else toast('Dodano pieczątkę: ' + c.name + ' (' + n + '/10).');
       renderCard(mode === 'package_visit' ? null : n);
+      if (c.referred_by_name && !(c.visits || []).length) refReward(c);
     } catch (e) { btn.disabled = false; fail(e); }
+  }
+
+  // pierwsza wizyta koleżanki z polecenia: baza dodała pieczątkę polecającej; pokaż komu i wyślij jej powiadomienie
+  async function refReward(c) {
+    await loadRefs();
+    const r = refs.find((x) => x.id === c.id);
+    if (!r || !r.referrer_id) return;
+    const head = c.name + ' była pierwszy raz. Poleciła ją ' + r.referrer_name + '. ';
+    if (r.referrer_bonus > 0) {
+      await UI.ask(head + 'Polecająca ma teraz w kolejce rytuał z rabatem, więc pieczątka za polecenie dopisze się sama po jej najbliższej wizycie.', 'OK', true);
+    } else {
+      Api.notifyStamp(r.referrer_id, r.referrer_stamps).catch(() => {});
+      await UI.ask(head + 'Pieczątka za polecenie jest już dodana na jej karcie (' + r.referrer_stamps + '/10) i dostała powiadomienie.', 'OK', true);
+    }
   }
 
   function smsText(c) {
