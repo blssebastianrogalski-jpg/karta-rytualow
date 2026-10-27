@@ -10,7 +10,7 @@ window.APP_CONFIG = {
   PHONE: '500 694 094',
   ADDRESS: 'ul. Zawierciańska 4/12, 32-310 Klucze',
   INSTAGRAM_URL: 'https://www.instagram.com/jrtwojecialo',
-  FACEBOOK_URL: 'https://fb.com/jrtwojecialo',
+  FACEBOOK_URL: 'https://www.facebook.com/jrtwojecialo',
   WEBSITE_URL: 'https://twojecialotwojdobrostan.pl',
   VOUCHER_URL: 'https://twojecialotwojdobrostan.pl/voucher-na-masaz-klucze/',
   GOOGLE_REVIEW_URL: 'https://g.page/r/CQM4lNka6sVNEBM/review',
