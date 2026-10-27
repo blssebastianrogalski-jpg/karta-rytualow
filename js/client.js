@@ -377,6 +377,10 @@
         <span class="small">Zaproszone koleżanki: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>
         ${card.bonus_stamps ? `<span class="small gold">Czeka na Ciebie ${card.bonus_stamps} ${UI.plural(card.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopiszę ${card.bonus_stamps > 1 ? 'je' : 'ją'} po Twoim najbliższym rytuale, żeby nie przepadł Ci rabat.</span>` : ''}
       </section>` : '';
+    const walletOn = CFG.GOOGLE_WALLET === true || (CFG.GOOGLE_WALLET === 'test' && (CFG.GOOGLE_WALLET_TEST_CARDS || []).includes(card.code));
+    const wallet = walletOn && !Api.demo && /android/i.test(navigator.userAgent)
+      ? '<button class="gwallet" id="gwalletBtn" type="button" aria-label="Dodaj do Portfela Google"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="#fff"/><path d="M3 9h18" stroke="#1f1f1f" stroke-width="1.6"/><rect x="14" y="12" width="5" height="3" rx="1.5" fill="#1f1f1f"/></svg><span>Dodaj do Portfela Google</span></button><p class="small center" id="gwalletErr" role="alert" hidden></p>'
+      : '';
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
       ${welcome}
@@ -390,6 +394,7 @@
       </section>
       ${next}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
+      ${wallet}
       ${tiles}
       ${install}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
@@ -403,6 +408,8 @@
     if (pb) pb.addEventListener('click', enablePush);
     const rb = $('#referBtn');
     if (rb) rb.addEventListener('click', shareInvite);
+    const gw = $('#gwalletBtn');
+    if (gw) gw.addEventListener('click', addToGoogleWallet);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
   }
@@ -417,6 +424,21 @@
     }
     try { await navigator.clipboard.writeText(text + ' ' + url); toast('Skopiowałam zaproszenie. Wklej je koleżance w wiadomości.'); }
     catch (e) { location.href = 'sms:?&body=' + encodeURIComponent(text + ' ' + url); }
+  }
+
+  // Portfel Google: funkcja zapisuje kartę w Google i zwraca link, który otwiera Portfel
+  async function addToGoogleWallet() {
+    const btn = $('#gwalletBtn');
+    const err = $('#gwalletErr');
+    btn.disabled = true;
+    err.hidden = true;
+    try {
+      location.href = await Api.googleWalletLink(CardStore.get());
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+    }
+    btn.disabled = false;
   }
 
   // Kafelki z linkami (pokazują się tylko te, które mają adres w config.js)
