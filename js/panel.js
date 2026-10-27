@@ -152,8 +152,8 @@
     const box = $('#reqs');
     try { requests = await Api.requestsList(); } catch (e) { requests = []; } // baza jeszcze bez próśb o termin
     if (!box) return;
-    const open = requests.filter((r) => r.status === 'new');
-    const done = requests.filter((r) => r.status !== 'new');
+    const open = requests.filter((r) => r.status === 'new' || r.status === 'suggested');
+    const done = requests.filter((r) => r.status !== 'new' && r.status !== 'suggested');
     if (!requests.length) { box.innerHTML = ''; return; }
     const when = (r) => dateLabel(r.pref_day) + ', ' + (r.pref_time ? 'ok. ' + r.pref_time : PART[r.pref_part]);
     const tel = (r) => r.phone.replace(/[^\d+]/g, '');
@@ -161,8 +161,10 @@
       ${open.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
         <span class="eyebrow eyebrow--gold">${open.length === 1 ? 'Nowa prośba o termin' : 'Prośby o termin: ' + open.length}</span>
         ${open.map((r, i) => `<div style="display:flex;flex-direction:column;gap:4px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
-          <button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(r.card_id)}">${esc(r.name)} <span class="small">· ${r.stamps}/10</span></button>
+          <button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(r.card_id)}">${esc(r.name)} <span class="small">· ${r.stamps}/10</span>${r.status === 'suggested' ? ' <span class="tag">czeka na wybór klientki</span>' : r.conflict ? ' <span class="tag tag--solid">konflikt</span>' : ''}</button>
           <span class="strong gold">${esc(when(r))}</span>
+          ${r.conflict ? `<span class="small" style="color:var(--text)">${esc(r.conflict)}</span>` : ''}
+          ${r.status === 'suggested' ? `<span class="small" style="color:var(--text-2)">Zaproponowałam: ${esc((r.suggestions || []).map((iso) => dateLabel(dayOf(iso)) + ' ' + hhmm(iso)).join(' · '))}</span>` : ''}
           <span class="small" style="color:var(--text-2)">${esc(r.service || 'rytuał do ustalenia')} · ${esc(r.phone)} · wysłana ${esc(UI.fmtShort(r.created_at))}</span>
           ${r.message ? `<span class="small" style="color:var(--text);font-style:italic">„${esc(r.message)}”</span>` : ''}
           <div class="btn-row" style="margin-top:4px">
@@ -203,10 +205,21 @@
           <div class="field"><label for="okTime">Godzina</label><input class="input" id="okTime" type="time" step="900" value="${esc(r.pref_time || '')}" required></div>
         </div>
         <div class="field"><label for="okSvc">Rytuał</label><select class="input" id="okSvc"><option value="">${esc(r.service || 'do ustalenia')}</option>${services}</select></div>
+        <p class="error" id="okWarn" role="status" hidden style="margin:0"></p>
         <p class="small" style="margin:0">Wizyta wejdzie do planu dnia, a klientka zobaczy ją na karcie i dostanie powiadomienie. <b>Wpisz ten termin także w Booksy</b>, żeby nikt inny go nie zarezerwował.</p>
         <p class="error" id="okErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit">Potwierdź</button>
       </form>`);
+    // ostrzeżenie o kolizji z planem dnia (nie blokuje potwierdzenia)
+    const warn = async () => {
+      const el = $('#okWarn'); if (!el) return;
+      const day = $('#okDay').value, time = $('#okTime').value;
+      let res = null;
+      if (day && time) { try { res = await Api.slotConflict(day, time, $('#okSvc').value || r.service); } catch (ex) { res = null; } }
+      el.textContent = res ? 'Uwaga: ' + res : ''; el.hidden = !res;
+    };
+    ['#okDay', '#okTime', '#okSvc'].forEach((id) => $(id).addEventListener('change', warn));
+    warn();
     $('#okForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       try {

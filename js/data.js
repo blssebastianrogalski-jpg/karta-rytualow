@@ -58,6 +58,53 @@
   ];
 
   // ---------- TRYB DEMO ----------
+  // Sprawdzanie wolnych godzin w trybie pokazowym (w bazie robi to prosby-konflikty.sql)
+  const Slots = {
+    hours: { 1: ['09:00', '19:00'], 2: ['09:00', '19:00'], 3: ['09:00', '19:00'], 4: ['09:00', '18:00'], 5: ['09:00', '18:00'] },
+    brk: 30,
+    dur: { 'Kobido UP®': 90, 'Master Kobido UP®': 120, 'Head SPA Premium': 90, 'Access Bars®': 75, 'Refleksologia Stóp Premium': 45,
+      'Masaż relaksacyjny 60 min': 60, 'Masaż relaksacyjny 90 min': 90, 'Masaż aromaterapeutyczny 60 min': 60, 'Masaż aromaterapeutyczny 90 min': 90,
+      'Masaż gorącą świecą': 60, 'Masaż głowy, karku i obręczy barkowej': 45, 'Ukojenie Dla Żuchwy i Twarzy': 60 },
+    minutes(s) { return s ? Slots.dur[s] || 60 : Math.max(...Object.values(Slots.dur)); },
+    ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
+    hm(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); },
+    at(day, hm) { return new Date(day + 'T' + hm + ':00'); },
+    check(db, start, min) {
+      const day = Slots.ymd(start), h = Slots.hours[start.getDay() || 7];
+      if (!h) return 'Studio nieczynne tego dnia';
+      if (start < Date.now() + 2 * 36e5) return 'Za krótko przed wizytą';
+      const end = new Date(+start + min * 6e4);
+      if (start < Slots.at(day, h[0]) || end > Slots.at(day, h[1])) return 'Poza godzinami pracy (' + h[0] + '–' + h[1] + ')';
+      const hit = (db.plan || []).filter((p) => p.day === day && p.status === 'planned' && p.start_at).filter((p) => {
+        const s = new Date(p.start_at), e = new Date(+s + (Slots.minutes(p.service) + Slots.brk) * 6e4);
+        return s < new Date(+end + Slots.brk * 6e4) && start < e;
+      });
+      if (!hit.length) return 'ok';
+      return 'Nakłada się na: ' + hit.map((p) => { const c = db.cards.find((x) => x.id === p.card_id); return (c ? c.name : 'Klientka') + ' ' + Slots.hm(new Date(p.start_at)) + (p.service ? ' (' + p.service + ')' : ''); }).join(', ');
+    },
+    conflict(db, day, part, time, service) {
+      const min = Slots.minutes(service);
+      if (time) { const r = Slots.check(db, Slots.at(day, time), min); return r === 'ok' ? null : r; }
+      const h = Slots.hours[new Date(day + 'T12:00:00').getDay() || 7];
+      if (!h) return 'Studio nieczynne tego dnia';
+      const from = { midday: '12:00', evening: '16:00' }[part] || h[0], to = { morning: '11:59', midday: '15:59' }[part] || h[1];
+      for (let t = Slots.at(day, from > h[0] ? from : h[0]); Slots.hm(t) <= to; t = new Date(+t + 18e5)) if (Slots.check(db, t, min) === 'ok') return null;
+      return 'Brak wolnej godziny ' + ({ morning: 'rano (do 12:00)', midday: 'w południe (12–16)', evening: 'po 16:00' }[part] || 'tego dnia') + ' tego dnia';
+    },
+    // wolne godziny najbliższe godzinie target
+    free(db, target, min, n) {
+      const found = [];
+      const base = new Date(Math.max(+target, Date.now())); base.setHours(0, 0, 0, 0);
+      for (let i = 0; i <= 21 && found.length < (n || 3) * 4; i++) {
+        const d = new Date(+base); d.setDate(d.getDate() + i);
+        const h = Slots.hours[d.getDay() || 7]; if (!h) continue;
+        const day = Slots.ymd(d);
+        for (let t = Slots.at(day, h[0]); +t + min * 6e4 <= +Slots.at(day, h[1]); t = new Date(+t + 18e5)) if (Slots.check(db, t, min) === 'ok') found.push(t);
+      }
+      return found.sort((x, y) => Math.abs(x - target) - Math.abs(y - target)).slice(0, n || 3).sort((x, y) => x - y).map((t) => t.toISOString());
+    }
+  };
+
   function demoApi() {
     const KEY = 'tctd.demoDb';
     const SESSION = 'tctd.demoSession';
@@ -292,7 +339,7 @@
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
-      // prośby o termin (jak prosby-o-termin.sql)
+      // prośby o termin (jak prosby-o-termin.sql i prosby-konflikty.sql)
       requestCreate: (token, f) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
         if (!c) throw new Error('Nie znaleziono karty.');
@@ -300,34 +347,54 @@
         if (!f.day || f.day < Rules.dayPL(0)) throw new Error('Wybierz dzień od dziś.');
         if (f.day > Rules.dayPL(60)) throw new Error('Termin możesz wybrać najwyżej 60 dni naprzód.');
         db.requests = db.requests || [];
-        if (db.requests.filter((r) => r.card_id === c.id && r.status === 'new').length >= 3) throw new Error('Masz już 3 prośby czekające na odpowiedź. Odezwę się wkrótce.');
+        let attempt = 1;
+        const prev = f.retryOf && db.requests.find((x) => x.id === f.retryOf && x.card_id === c.id && x.status === 'suggested');
+        if (prev) { prev.status = 'cancelled'; prev.handled_at = new Date().toISOString(); attempt = 2; }
+        if (db.requests.filter((r) => r.card_id === c.id && ['new', 'suggested'].includes(r.status)).length >= 3) throw new Error('Masz już 3 prośby czekające na odpowiedź. Odezwę się wkrótce.');
+        const conflict = Slots.conflict(db, f.day, f.part || 'any', f.time || null, f.service || null);
+        let status = 'new', suggestions = null;
+        if (conflict && attempt === 1) {
+          const s = Slots.free(db, new Date(f.day + 'T' + (f.time || { morning: '09:00', midday: '12:00', evening: '16:00' }[f.part] || '12:00')), Slots.minutes(f.service || null));
+          if (s.length) { status = 'suggested'; suggestions = s; }
+        }
         const r = { id: Date.now(), card_id: c.id, service: f.service || null, pref_day: f.day, pref_part: f.part || 'any', pref_time: f.time || null, phone: f.phone.trim(),
-          message: (f.message || '').trim() || null, status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: new Date().toISOString() };
+          message: (f.message || '').trim() || null, status, attempt, conflict, suggestions, confirmed_at: null, reply: null, handled_at: null, created_at: new Date().toISOString() };
         db.requests.unshift(r); save(db); return r;
+      }),
+      requestPick: (token, id, start) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && x.status === 'suggested');
+        if (!r) throw new Error('Ta propozycja jest już nieaktualna. Poproś o termin jeszcze raz.');
+        const d = new Date(start);
+        const res = Slots.check(db, d, Slots.minutes(r.service));
+        Object.assign(r, { pref_day: Slots.ymd(d), pref_time: Slots.hm(d), pref_part: 'any', status: 'new', attempt: 2, suggestions: null,
+          conflict: res === 'ok' ? null : 'Wybrana godzina zajęła się w międzyczasie. ' + res });
+        save(db); return r;
       }),
       myRequests: (token) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
         if (!c) return [];
         const now = Date.now();
-        return (db.requests || []).filter((r) => r.card_id === c.id && (r.status === 'new'
+        return (db.requests || []).filter((r) => r.card_id === c.id && (['new', 'suggested'].includes(r.status)
           || (r.status === 'confirmed' && new Date(r.confirmed_at) > now - 36e5)
           || (r.status === 'declined' && new Date(r.handled_at) > now - 7 * 864e5))).slice(0, 5);
       }),
       requestCancel: (token, id) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
-        const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && x.status === 'new');
+        const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && ['new', 'suggested'].includes(x.status));
         if (!r) throw new Error('Tej prośby nie można już anulować. Zadzwoń do studia.');
         r.status = 'cancelled'; r.handled_at = new Date().toISOString(); save(db);
       }),
       requestsList: () => run(() => {
         guard(); const db = load(); const from = Date.now() - 14 * 864e5;
-        return (db.requests || []).filter((r) => r.status === 'new' || (r.handled_at && new Date(r.handled_at) > from))
-          .sort((a, b) => (a.status === 'new') !== (b.status === 'new') ? (a.status === 'new' ? -1 : 1) : a.status === 'new' ? a.created_at.localeCompare(b.created_at) : b.handled_at.localeCompare(a.handled_at))
+        const open = (r) => ['new', 'suggested'].includes(r.status);
+        return (db.requests || []).filter((r) => open(r) || (r.handled_at && new Date(r.handled_at) > from))
+          .sort((a, b) => open(a) !== open(b) ? (open(a) ? -1 : 1) : open(a) ? (a.status === 'suggested') - (b.status === 'suggested') || a.created_at.localeCompare(b.created_at) : b.handled_at.localeCompare(a.handled_at))
           .map((r) => { const c = db.cards.find((x) => x.id === r.card_id) || {}; return Object.assign({}, r, { name: c.name, stamps: c.stamps, card_phone: c.phone }); });
       }),
       requestConfirm: (id, day, time, service) => run(() => {
         guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id);
-        if (!r || !['new', 'declined'].includes(r.status)) throw new Error('Ta prośba jest już załatwiona.');
+        if (!r || !['new', 'suggested', 'declined'].includes(r.status)) throw new Error('Ta prośba jest już załatwiona.');
         if (!day || day < Rules.dayPL(0)) throw new Error('Wybierz dzień od dziś.');
         if (!time) throw new Error('Podaj godzinę wizyty.');
         const start = new Date(day + 'T' + time + ':00').toISOString();
@@ -335,13 +402,17 @@
         let p = db.plan.find((x) => x.card_id === r.card_id && x.day === day && x.status === 'planned' && !x.booking_id);
         if (p) { p.start_at = start; p.service = service || r.service || p.service; }
         else { p = { id: Date.now(), card_id: r.card_id, day, service: service || r.service, start_at: start, status: 'planned' }; db.plan.push(p); }
-        Object.assign(r, { status: 'confirmed', confirmed_at: start, plan_id: p.id, service: service || r.service, reply: null, handled_at: new Date().toISOString() });
+        Object.assign(r, { status: 'confirmed', confirmed_at: start, plan_id: p.id, service: service || r.service, reply: null, suggestions: null, handled_at: new Date().toISOString() });
         save(db); return r;
       }),
       requestDecline: (id, reply) => run(() => {
-        guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id && x.status === 'new');
+        guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id && ['new', 'suggested'].includes(x.status));
         if (!r) throw new Error('Ta prośba jest już załatwiona.');
-        Object.assign(r, { status: 'declined', reply: (reply || '').trim() || null, handled_at: new Date().toISOString() }); save(db);
+        Object.assign(r, { status: 'declined', reply: (reply || '').trim() || null, suggestions: null, handled_at: new Date().toISOString() }); save(db);
+      }),
+      slotConflict: (day, time, service) => run(() => {
+        guard(); const res = Slots.check(load(), new Date(day + 'T' + time), Slots.minutes(service || null));
+        return res === 'ok' || res === 'Za krótko przed wizytą' ? null : res;
       }),
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
       resetToken: (id) => run(() => { guard(); return mutate(id, (c) => { c.token = rnd(36, '0123456789abcdef'); }); }),
@@ -506,7 +577,9 @@
       planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
-      requestCreate: (token, f) => rpc('request_create', { p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }),
+      requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {})),
+      requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
+      slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
       myRequests: (token) => rpc('my_requests', { p_token: token }),
       requestCancel: (token, id) => rpc('request_cancel', { p_token: token, p_id: id }),
       requestsList: () => rpc('requests_list', {}),
