@@ -90,6 +90,10 @@
         { id: 2, card_id: db.cards[1].id, day, service: 'Head SPA Premium', status: 'planned' },
         { id: 3, card_id: db.cards[2].id, day, service: 'Kobido UP®', status: 'planned' }
       ];
+      db.requests = [
+        { id: 1, card_id: db.cards[0].id, service: 'Head SPA Premium', pref_day: Rules.dayPL(3), pref_part: 'midday', pref_time: null, phone: '600 100 200',
+          message: 'Mogę też w sobotę rano.', status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: daysAgo(0.05) }
+      ];
       return db;
     }
     function load() {
@@ -288,6 +292,57 @@
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
+      // prośby o termin (jak prosby-o-termin.sql)
+      requestCreate: (token, f) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        if (!c) throw new Error('Nie znaleziono karty.');
+        if (String(f.phone || '').replace(/\D/g, '').length < 9) throw new Error('Podaj numer telefonu, żebym mogła oddzwonić.');
+        if (!f.day || f.day < Rules.dayPL(0)) throw new Error('Wybierz dzień od dziś.');
+        if (f.day > Rules.dayPL(60)) throw new Error('Termin możesz wybrać najwyżej 60 dni naprzód.');
+        db.requests = db.requests || [];
+        if (db.requests.filter((r) => r.card_id === c.id && r.status === 'new').length >= 3) throw new Error('Masz już 3 prośby czekające na odpowiedź. Odezwę się wkrótce.');
+        const r = { id: Date.now(), card_id: c.id, service: f.service || null, pref_day: f.day, pref_part: f.part || 'any', pref_time: f.time || null, phone: f.phone.trim(),
+          message: (f.message || '').trim() || null, status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: new Date().toISOString() };
+        db.requests.unshift(r); save(db); return r;
+      }),
+      myRequests: (token) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        if (!c) return [];
+        const now = Date.now();
+        return (db.requests || []).filter((r) => r.card_id === c.id && (r.status === 'new'
+          || (r.status === 'confirmed' && new Date(r.confirmed_at) > now - 36e5)
+          || (r.status === 'declined' && new Date(r.handled_at) > now - 7 * 864e5))).slice(0, 5);
+      }),
+      requestCancel: (token, id) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && x.status === 'new');
+        if (!r) throw new Error('Tej prośby nie można już anulować. Zadzwoń do studia.');
+        r.status = 'cancelled'; r.handled_at = new Date().toISOString(); save(db);
+      }),
+      requestsList: () => run(() => {
+        guard(); const db = load(); const from = Date.now() - 14 * 864e5;
+        return (db.requests || []).filter((r) => r.status === 'new' || (r.handled_at && new Date(r.handled_at) > from))
+          .sort((a, b) => (a.status === 'new') !== (b.status === 'new') ? (a.status === 'new' ? -1 : 1) : a.status === 'new' ? a.created_at.localeCompare(b.created_at) : b.handled_at.localeCompare(a.handled_at))
+          .map((r) => { const c = db.cards.find((x) => x.id === r.card_id) || {}; return Object.assign({}, r, { name: c.name, stamps: c.stamps, card_phone: c.phone }); });
+      }),
+      requestConfirm: (id, day, time, service) => run(() => {
+        guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id);
+        if (!r || !['new', 'declined'].includes(r.status)) throw new Error('Ta prośba jest już załatwiona.');
+        if (!day || day < Rules.dayPL(0)) throw new Error('Wybierz dzień od dziś.');
+        if (!time) throw new Error('Podaj godzinę wizyty.');
+        const start = new Date(day + 'T' + time + ':00').toISOString();
+        db.plan = db.plan || [];
+        let p = db.plan.find((x) => x.card_id === r.card_id && x.day === day && x.status === 'planned' && !x.booking_id);
+        if (p) { p.start_at = start; p.service = service || r.service || p.service; }
+        else { p = { id: Date.now(), card_id: r.card_id, day, service: service || r.service, start_at: start, status: 'planned' }; db.plan.push(p); }
+        Object.assign(r, { status: 'confirmed', confirmed_at: start, plan_id: p.id, service: service || r.service, reply: null, handled_at: new Date().toISOString() });
+        save(db); return r;
+      }),
+      requestDecline: (id, reply) => run(() => {
+        guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id && x.status === 'new');
+        if (!r) throw new Error('Ta prośba jest już załatwiona.');
+        Object.assign(r, { status: 'declined', reply: (reply || '').trim() || null, handled_at: new Date().toISOString() }); save(db);
+      }),
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
       resetToken: (id) => run(() => { guard(); return mutate(id, (c) => { c.token = rnd(36, '0123456789abcdef'); }); }),
       transferStamps: (id, n) => run(() => { guard(); return mutate(id, (c) => {
@@ -451,6 +506,12 @@
       planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
+      requestCreate: (token, f) => rpc('request_create', { p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }),
+      myRequests: (token) => rpc('my_requests', { p_token: token }),
+      requestCancel: (token, id) => rpc('request_cancel', { p_token: token, p_id: id }),
+      requestsList: () => rpc('requests_list', {}),
+      requestConfirm: (id, day, time, service) => rpc('request_confirm', { p_id: id, p_day: day, p_time: time, p_service: service || null }),
+      requestDecline: (id, reply) => rpc('request_decline', { p_id: id, p_reply: reply || null }),
       deleteCard: (id) => rpc('delete_card', { p_id: id }),
       resetToken: (id) => rpc('reset_token', { p_id: id }),
       transferStamps: (id, n) => rpc('transfer_paper_stamps', { p_id: id, p_stamps: n }),
