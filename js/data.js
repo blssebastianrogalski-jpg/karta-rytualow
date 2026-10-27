@@ -163,6 +163,7 @@
       }),
       savePushSubscription: async () => null,
       notifyStamp: async () => null,
+      googleWalletLink: async () => { throw new Error('W trybie demo Portfel Google nie działa.'); },
       saveStaffPush: async () => null,
       getMyCard: (token) => run(() => {
         const c = load().cards.find((x) => x.token === token);
@@ -416,6 +417,7 @@
       },
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
+      googleWalletLink: async (token) => (await invoke('portfel-google', { action: 'link', token })).url,
       notifyStamp: async (cardId, stamps) => {
         const { error } = await sb.functions.invoke('notify-stamp', { body: { card_id: cardId, stamps } });
         if (error) throw new Error(error.message);

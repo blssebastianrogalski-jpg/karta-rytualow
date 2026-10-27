@@ -17,6 +17,10 @@ window.APP_CONFIG = {
   // Klucz publiczny VAPID do powiadomień push. Puste = przycisk ukryty.
   PUSH_PUBLIC_KEY: 'BMmiIwyPch5Ffp9O9CYb81HmMhVIsFrMJ4HesZMXJ1btYHOWiaXBz70A_Ijez4BR457jvdwwgWUPTA68MbrX2TM',
   APP_URL: 'https://karta.twojecialotwojdobrostan.pl/',
+  // Przycisk „Dodaj do Portfela Google” na Androidzie (funkcja portfel-google).
+  // 'test' = tylko dla kart z listy niżej (zanim Google zatwierdzi kartę), true = dla wszystkich, false = ukryty.
+  GOOGLE_WALLET: 'test',
+  GOOGLE_WALLET_TEST_CARDS: [],
 
   // Rytuały do wyboru przy dodawaniu pieczątki
   SERVICES: [
