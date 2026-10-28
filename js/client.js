@@ -7,6 +7,7 @@
   let card = null;
   let requests = [];       // prośby o termin (dla klientek bez Booksy)
   let retryOf = null;      // „inny dzień” po propozycji wolnych godzin
+  let moveOf = null;       // przełożenie wizyty umówionej przez aplikację (id z planu dnia)
   let screen = 'card';
   let poll = null;
   let installEvt = null;
@@ -365,14 +366,14 @@
     if (pushBlocked) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Nie dostajesz przypomnień? Odblokuj powiadomienia: stuknij ikonę kłódki przy adresie, potem <b>Uprawnienia</b> → <b>Powiadomienia</b> → <b>Zezwól</b>.</span></div>';
     const visits = (card.visits || []).slice(0, 5);
     const upcoming = card.upcoming || [];
-    const reqDays = new Set(requests.filter((r) => r.status === 'confirmed').map((r) => dayOf(r.confirmed_at)));
-    const viaReq = upcoming.filter((u) => reqDays.has(u.day)).length;
-    const tel = 'tel:' + CFG.PHONE.replace(/\s/g, '');
+    const viaBooksy = upcoming.filter((u) => !u.own).length;
     const next = upcoming.length ? `<section class="panel" style="gap:6px" aria-label="Najbliższa wizyta">
         <span class="eyebrow eyebrow--gold">${upcoming.length > 1 ? 'Twoje najbliższe wizyty' : 'Twoja najbliższa wizyta'}</span>
-        ${upcoming.map((u, i) => `<div style="display:flex;flex-direction:column;gap:2px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}"><span class="strong" style="font-size:${i ? 15 : 17}px">${esc(visitWhen(u))}</span>${u.service ? '<span class="small" style="color:var(--text-2)">' + esc(cleanService(u.service)) + '</span>' : ''}</div>`).join('')}
-        ${viaReq < upcoming.length ? `<a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">Zmień lub odwołaj w Booksy</a>` : ''}
-        ${viaReq ? `<a class="btn btn--line btn--sm" href="${esc(tel)}" style="margin-top:6px">Zmień lub odwołaj: zadzwoń ${esc(CFG.PHONE)}</a>` : ''}
+        ${upcoming.map((u, i) => `<div style="display:flex;flex-direction:column;gap:2px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}"><span class="strong" style="font-size:${i ? 15 : 17}px">${esc(visitWhen(u))}</span>${u.service ? '<span class="small" style="color:var(--text-2)">' + esc(cleanService(u.service)) + '</span>' : ''}
+          ${u.own ? (u.moving
+            ? '<span class="small gold">Prośba o przełożenie wysłana. Ten termin zostaje, dopóki nie potwierdzę nowego.</span>'
+            : `<div class="btn-row" style="margin-top:6px"><button class="btn btn--line btn--sm" data-visit-move="${u.id}">Przełóż</button><button class="btn btn--ghost btn--sm" data-visit-cancel="${u.id}">Odwołaj</button></div>`) : ''}</div>`).join('')}
+        ${viaBooksy ? `<a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">${viaBooksy < upcoming.length ? 'Zmień lub odwołaj wizytę z Booksy' : 'Zmień lub odwołaj w Booksy'}</a>` : ''}
       </section>` : '';
     const reqBox = requestsBox();
     const lastVisit = visits[0];
@@ -423,10 +424,12 @@
     if (gw) gw.addEventListener('click', addToGoogleWallet);
     const bb = main.querySelector('button[data-go]');
     if (bb) bb.addEventListener('click', () => go('bday'));
-    $('#reqBtn').addEventListener('click', () => { retryOf = null; go('req'); });
+    $('#reqBtn').addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); });
+    main.querySelectorAll('[data-visit-cancel]').forEach((b) => b.addEventListener('click', () => cancelVisit(+b.dataset.visitCancel)));
+    main.querySelectorAll('[data-visit-move]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = +b.dataset.visitMove; go('req'); }));
     main.querySelectorAll('[data-req-cancel]').forEach((b) => b.addEventListener('click', () => cancelRequest(+b.dataset.reqCancel)));
-    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; go('req'); }));
-    main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; go('req'); }));
+    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); }));
+    main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; moveOf = null; go('req'); }));
     main.querySelectorAll('[data-req-pick]').forEach((b) => b.addEventListener('click', () => pickSlot(+b.dataset.reqPick, b.dataset.at)));
   }
 
@@ -459,13 +462,13 @@
     if (!open.length && !declined.length) return sug;
     return sug + `<section class="panel${declined.length ? ' panel--gold' : ''}" style="gap:8px" aria-label="Prośby o termin">
       ${open.map((r, i) => `<div style="display:flex;flex-direction:column;gap:3px${i ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}">
-        <span class="eyebrow eyebrow--gold">Prośba o termin · ${r.attempt === 2 ? 'sprawdzę i odezwę się' : 'czeka na potwierdzenie'}</span>
+        <span class="eyebrow eyebrow--gold">${r.move_of ? 'Przełożenie wizyty' : 'Prośba o termin'} · ${r.attempt === 2 ? 'sprawdzę i odezwę się' : 'czeka na potwierdzenie'}</span>
         <span class="strong">${esc(when(r))}</span>
         <span class="small" style="color:var(--text-2)">${esc(r.service || 'Rytuał do ustalenia')} · oddzwonię na ${esc(r.phone)}</span>
         <button class="linkbtn" data-req-cancel="${r.id}" style="align-self:flex-start;color:var(--muted)">Anuluj prośbę</button>
       </div>`).join('')}
       ${declined.map((r, i) => `<div style="display:flex;flex-direction:column;gap:3px${i || open.length ? ';padding-top:8px;border-top:1px solid var(--line-soft)' : ''}">
-        <span class="eyebrow eyebrow--gold">Odpowiedź na prośbę o termin</span>
+        <span class="eyebrow eyebrow--gold">${r.move_of ? 'Odpowiedź na prośbę o przełożenie' : 'Odpowiedź na prośbę o termin'}</span>
         <span class="small" style="color:var(--text-2)">${esc(when(r))}</span>
         <span class="strong">${esc(r.reply || 'Ten termin jest niestety zajęty.')}</span>
         <button class="btn btn--line btn--sm" data-req-again="1" style="margin-top:4px">Poproś o inny termin</button>
@@ -482,6 +485,19 @@
     render();
   }
 
+  // odwołanie wizyty umówionej przez aplikację: znika z planu studia, studio dostaje powiadomienie
+  async function cancelVisit(id) {
+    const u = (card.upcoming || []).find((x) => x.id === id);
+    if (!u || !(await UI.ask('Odwołać wizytę: ' + visitWhen(u) + (u.service ? ', ' + cleanService(u.service) : '') + '?', 'Odwołaj wizytę'))) return;
+    try {
+      await Api.visitCancel(CardStore.get(), id);
+      card.upcoming = (card.upcoming || []).filter((x) => x.id !== id);
+      toast('Wizyta odwołana. Dziękuję, że dajesz znać.');
+    } catch (e) { toast(e.message, 'error'); }
+    await loadRequests();
+    render();
+  }
+
   async function cancelRequest(id) {
     if (!(await UI.ask('Anulować tę prośbę o termin?', 'Anuluj prośbę'))) return;
     try { await Api.requestCancel(CardStore.get(), id); toast('Prośba anulowana.'); } catch (e) { toast(e.message, 'error'); }
@@ -492,12 +508,15 @@
   function renderRequest() {
     const services = ['Nie wiem, doradź mi', ...(CFG.SERVICES || [])];
     const parts = Object.keys(PART);
+    const moving = moveOf && (card.upcoming || []).find((u) => u.id === moveOf);
+    if (moveOf && !moving) moveOf = null;
+    const svcNow = moving && moving.service ? services.find((x) => x === moving.service || cleanService(x) === cleanService(moving.service)) : null;
     main.innerHTML = `
       <button class="back" id="reqBack">‹ Karta</button>
-      <h1>Poproś o termin</h1>
-      <p class="lead" style="margin-top:-6px">${retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
+      <h1>${moving ? 'Przełóż wizytę' : 'Poproś o termin'}</h1>
+      <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
-        <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}">${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
         <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}"></div>
         <div class="field"><span class="label" id="rPartL">Pora dnia</span>
           <div class="chips" role="radiogroup" aria-labelledby="rPartL" id="rParts" style="flex-wrap:wrap">${parts.map((k) => `<button type="button" class="pick" role="radio" data-part="${k}" aria-checked="${k === 'any'}" style="min-height:44px;padding:8px 12px;flex:1 1 45%">${esc(PART[k].replace(/^./, (ch) => ch.toUpperCase()))}</button>`).join('')}</div>
@@ -506,11 +525,11 @@
         <div class="field"><label for="rPhone">Telefon do kontaktu</label><input class="input" id="rPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000" value="${esc(card.phone || '')}"></div>
         <div class="field"><label for="rMsg">Wiadomość (opcjonalnie)</label><textarea class="input" id="rMsg" rows="3" maxlength="500" placeholder="np. mogę też w sobotę rano"></textarea></div>
         <p class="error" id="rErr" role="alert" hidden></p>
-        <button class="btn btn--gold" type="submit" id="rBtn">Wyślij prośbę</button>
+        <button class="btn btn--gold" type="submit" id="rBtn">${moving ? 'Poproś o nowy termin' : 'Wyślij prośbę'}</button>
       </form>
       <p class="small center">To jeszcze nie rezerwacja. Termin jest Twój, gdy go potwierdzę. Szybciej: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     let part = 'any';
-    $('#reqBack').addEventListener('click', () => { retryOf = null; go('card'); });
+    $('#reqBack').addEventListener('click', () => { retryOf = null; moveOf = null; go('card'); });
     $('#rParts').addEventListener('click', (e) => {
       const b = e.target.closest('[data-part]'); if (!b) return;
       part = b.dataset.part;
@@ -519,20 +538,21 @@
     $('#reqForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = $('#rErr');
-      const f = { service: $('#rService').value, day: $('#rDay').value, part, time: $('#rTime').value, phone: $('#rPhone').value.trim(), message: $('#rMsg').value, retryOf };
+      const f = { service: $('#rService').value, day: $('#rDay').value, part, time: $('#rTime').value, phone: $('#rPhone').value.trim(), message: $('#rMsg').value, retryOf, moveOf };
       if (!f.day) { err.textContent = 'Wybierz dzień.'; err.hidden = false; return; }
       if (f.phone.replace(/\D/g, '').length < 9) { err.textContent = 'Podaj numer telefonu, żebym mogła oddzwonić.'; err.hidden = false; return; }
       const btn = $('#rBtn'); btn.disabled = true; btn.textContent = 'Wysyłam…';
       try {
         const r = await Api.requestCreate(CardStore.get(), f);
-        retryOf = null;
+        retryOf = null; moveOf = null;
         await loadRequests();
+        try { card = (await Api.getMyCard(CardStore.get())) || card; } catch (e2) { /* zostaje stara karta */ }
         if (r.status === 'suggested') toast('Ten termin jest zajęty. Wybierz jedną z wolnych godzin.');
-        else toast('Prośba wysłana. Odezwę się, żeby potwierdzić termin.', 'reward');
+        else toast(f.moveOf ? 'Prośba o przełożenie wysłana. Odezwę się, żeby potwierdzić nowy termin.' : 'Prośba wysłana. Odezwę się, żeby potwierdzić termin.', 'reward');
         go('card');
       } catch (ex) {
         err.textContent = ex.message; err.hidden = false;
-        btn.disabled = false; btn.textContent = 'Wyślij prośbę';
+        btn.disabled = false; btn.textContent = moving ? 'Poproś o nowy termin' : 'Wyślij prośbę';
       }
     });
   }

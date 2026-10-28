@@ -163,7 +163,8 @@
         ref_count: all.filter((x) => x.referred_by === c.id).length, ref_rewarded: all.filter((x) => x.referred_by === c.id && x.ref_rewarded_at).length });
       out.upcoming = (load().plan || []).filter((p) => p.card_id === c.id && p.status === 'planned' && p.day >= Rules.dayPL(0))
         .sort((x, y) => (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~'))).slice(0, 3)
-        .map((p) => ({ day: p.day, start_at: p.start_at || null, service: p.service }));
+        .map((p) => ({ id: p.id, day: p.day, start_at: p.start_at || null, service: p.service, own: !p.booking_id,
+          moving: (load().requests || []).some((r) => r.move_of === p.id && ['new', 'suggested'].includes(r.status)) }));
       return out;
     }
     function mutate(id, fn) {
@@ -350,6 +351,11 @@
         let attempt = 1;
         const prev = f.retryOf && db.requests.find((x) => x.id === f.retryOf && x.card_id === c.id && x.status === 'suggested');
         if (prev) { prev.status = 'cancelled'; prev.handled_at = new Date().toISOString(); attempt = 2; }
+        const moveOf = f.moveOf || (prev && prev.move_of) || null;
+        if (moveOf) {
+          if (!(db.plan || []).some((p) => p.id === moveOf && p.card_id === c.id && p.status === 'planned' && !p.booking_id)) throw new Error('Tej wizyty nie można już przełożyć w aplikacji. Zadzwoń do studia.');
+          db.requests.filter((x) => x.move_of === moveOf && ['new', 'suggested'].includes(x.status)).forEach((x) => { x.status = 'cancelled'; x.handled_at = new Date().toISOString(); });
+        }
         if (db.requests.filter((r) => r.card_id === c.id && ['new', 'suggested'].includes(r.status)).length >= 3) throw new Error('Masz już 3 prośby czekające na odpowiedź. Odezwę się wkrótce.');
         const conflict = Slots.conflict(db, f.day, f.part || 'any', f.time || null, f.service || null);
         let status = 'new', suggestions = null;
@@ -358,7 +364,7 @@
           if (s.length) { status = 'suggested'; suggestions = s; }
         }
         const r = { id: Date.now(), card_id: c.id, service: f.service || null, pref_day: f.day, pref_part: f.part || 'any', pref_time: f.time || null, phone: f.phone.trim(),
-          message: (f.message || '').trim() || null, status, attempt, conflict, suggestions, confirmed_at: null, reply: null, handled_at: null, created_at: new Date().toISOString() };
+          message: (f.message || '').trim() || null, status, attempt, conflict, suggestions, move_of: moveOf, confirmed_at: null, reply: null, handled_at: null, created_at: new Date().toISOString() };
         db.requests.unshift(r); save(db); return r;
       }),
       requestPick: (token, id, start) => run(() => {
@@ -385,12 +391,28 @@
         if (!r) throw new Error('Tej prośby nie można już anulować. Zadzwoń do studia.');
         r.status = 'cancelled'; r.handled_at = new Date().toISOString(); save(db);
       }),
+      visitCancel: (token, planId) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        const p = c && (db.plan || []).find((x) => x.id === planId && x.card_id === c.id && x.status === 'planned');
+        if (!p) throw new Error('Tej wizyty już nie ma w planie. Odśwież kartę.');
+        if (p.booking_id) throw new Error('Tę wizytę zmienisz w Booksy.');
+        const now = new Date().toISOString();
+        (db.requests || []).forEach((r) => {
+          if (r.plan_id === p.id && r.status === 'confirmed') Object.assign(r, { status: 'cancelled', reply: 'Odwołana przez klientkę w aplikacji', handled_at: now });
+          if (r.move_of === p.id && ['new', 'suggested'].includes(r.status)) Object.assign(r, { status: 'cancelled', handled_at: now });
+        });
+        db.plan = db.plan.filter((x) => x !== p); save(db);
+      }),
       requestsList: () => run(() => {
         guard(); const db = load(); const from = Date.now() - 14 * 864e5;
         const open = (r) => ['new', 'suggested'].includes(r.status);
         return (db.requests || []).filter((r) => open(r) || (r.handled_at && new Date(r.handled_at) > from))
           .sort((a, b) => open(a) !== open(b) ? (open(a) ? -1 : 1) : open(a) ? (a.status === 'suggested') - (b.status === 'suggested') || a.created_at.localeCompare(b.created_at) : b.handled_at.localeCompare(a.handled_at))
-          .map((r) => { const c = db.cards.find((x) => x.id === r.card_id) || {}; return Object.assign({}, r, { name: c.name, stamps: c.stamps, card_phone: c.phone }); });
+          .map((r) => {
+            const c = db.cards.find((x) => x.id === r.card_id) || {};
+            const m = r.move_of && (db.plan || []).find((x) => x.id === r.move_of);
+            return Object.assign({}, r, { name: c.name, stamps: c.stamps, card_phone: c.phone, move_from: m ? { day: m.day, start_at: m.start_at || null } : null });
+          });
       }),
       requestConfirm: (id, day, time, service) => run(() => {
         guard(); const db = load(); const r = (db.requests || []).find((x) => x.id === id);
@@ -399,10 +421,15 @@
         if (!time) throw new Error('Podaj godzinę wizyty.');
         const start = new Date(day + 'T' + time + ':00').toISOString();
         db.plan = db.plan || [];
-        let p = db.plan.find((x) => x.card_id === r.card_id && x.day === day && x.status === 'planned' && !x.booking_id);
+        const same = db.plan.filter((x) => x.card_id === r.card_id && x.day === day && x.status === 'planned' && !x.booking_id);
+        let p = same.find((x) => x.id === r.move_of) || same[0];
         if (p) { p.start_at = start; p.service = service || r.service || p.service; }
         else { p = { id: Date.now(), card_id: r.card_id, day, service: service || r.service, start_at: start, status: 'planned' }; db.plan.push(p); }
         Object.assign(r, { status: 'confirmed', confirmed_at: start, plan_id: p.id, service: service || r.service, reply: null, suggestions: null, handled_at: new Date().toISOString() });
+        if (r.move_of && r.move_of !== p.id) {
+          (db.requests || []).forEach((x) => { if (x.plan_id === r.move_of && x.status === 'confirmed') Object.assign(x, { status: 'cancelled', reply: 'Przełożona na nowy termin', handled_at: r.handled_at }); });
+          db.plan = db.plan.filter((x) => !(x.id === r.move_of && x.status === 'planned' && !x.booking_id));
+        }
         save(db); return r;
       }),
       requestDecline: (id, reply) => run(() => {
@@ -577,7 +604,8 @@
       planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
-      requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {})),
+      requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {}, f.moveOf ? { p_move_of: f.moveOf } : {})),
+      visitCancel: (token, planId) => rpc('visit_cancel', { p_token: token, p_plan_id: planId }),
       requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
       slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
       myRequests: (token) => rpc('my_requests', { p_token: token }),

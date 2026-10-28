@@ -161,7 +161,8 @@
       ${open.length ? `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
         <span class="eyebrow eyebrow--gold">${open.length === 1 ? 'Nowa prośba o termin' : 'Prośby o termin: ' + open.length}</span>
         ${open.map((r, i) => `<div style="display:flex;flex-direction:column;gap:4px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
-          <button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(r.card_id)}">${esc(r.name)} <span class="small">· ${r.stamps}/10</span>${r.status === 'suggested' ? ' <span class="tag">czeka na wybór klientki</span>' : r.conflict ? ' <span class="tag tag--solid">konflikt</span>' : ''}</button>
+          <button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(r.card_id)}">${esc(r.name)} <span class="small">· ${r.stamps}/10</span>${r.move_of ? ' <span class="tag">przełożenie</span>' : ''}${r.status === 'suggested' ? ' <span class="tag">czeka na wybór klientki</span>' : r.conflict ? ' <span class="tag tag--solid">konflikt</span>' : ''}</button>
+          ${r.move_from ? `<span class="small" style="color:var(--text-2)">Obecny termin: ${esc(dateLabel(r.move_from.day) + (r.move_from.start_at ? ', ' + hhmm(r.move_from.start_at) : ''))}. Zniknie z planu po potwierdzeniu nowego.</span>` : ''}
           <span class="strong gold">${esc(when(r))}</span>
           ${r.conflict ? `<span class="small" style="color:var(--text)">${esc(r.conflict)}</span>` : ''}
           ${r.status === 'suggested' ? `<span class="small" style="color:var(--text-2)">Zaproponowałam: ${esc((r.suggestions || []).map((iso) => dateLabel(dayOf(iso)) + ' ' + hhmm(iso)).join(' · '))}</span>` : ''}
@@ -179,7 +180,7 @@
       </div>` : ''}
       ${done.length ? `<details class="panel" style="padding:14px 16px;gap:8px">
         <summary class="eyebrow" style="cursor:pointer">Prośby o termin · załatwione (14 dni): ${done.length}</summary>
-        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((r) => `<button class="list-row" data-open="${esc(r.card_id)}" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line-soft);color:inherit;text-align:left;padding:10px 0;flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(r.name)}</span><span class="small">${r.status === 'confirmed' ? esc(dateLabel(dayOf(r.confirmed_at)) + ', ' + hhmm(r.confirmed_at)) : esc(when(r))} · ${REQ_STATUS[r.status]}</span></button>`).join('')}</div>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((r) => `<button class="list-row" data-open="${esc(r.card_id)}" style="width:100%;background:none;border:none;border-bottom:1px solid var(--line-soft);color:inherit;text-align:left;padding:10px 0;flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(r.name)}</span><span class="small">${r.status === 'confirmed' || r.confirmed_at ? esc(dateLabel(dayOf(r.confirmed_at)) + ', ' + hhmm(r.confirmed_at)) : esc(when(r))} · ${esc(r.status === 'cancelled' && r.reply ? r.reply.toLowerCase() : (r.move_of && r.status === 'confirmed' ? 'przełożona' : REQ_STATUS[r.status]))}</span></button>`).join('')}</div>
       </details>` : ''}`;
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
     box.querySelectorAll('[data-req-ok]').forEach((b) => b.addEventListener('click', () => openConfirm(requests.find((r) => r.id === +b.dataset.reqOk))));
@@ -206,7 +207,7 @@
         </div>
         <div class="field"><label for="okSvc">Rytuał</label><select class="input" id="okSvc"><option value="">${esc(r.service || 'do ustalenia')}</option>${services}</select></div>
         <p class="error" id="okWarn" role="status" hidden style="margin:0"></p>
-        <p class="small" style="margin:0">Wizyta wejdzie do planu dnia, a klientka zobaczy ją na karcie i dostanie powiadomienie. <b>Wpisz ten termin także w Booksy</b>, żeby nikt inny go nie zarezerwował.</p>
+        <p class="small" style="margin:0">Wizyta wejdzie do planu dnia, a klientka zobaczy ją na karcie i dostanie powiadomienie oraz SMS.${r.move_from ? ' Stary termin zniknie z planu.' : ''} <b>Wpisz ten termin także w Booksy</b>${r.move_from ? ' (i usuń tam stary)' : ''}, żeby nikt inny go nie zarezerwował.</p>
         <p class="error" id="okErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit">Potwierdź</button>
       </form>`);
