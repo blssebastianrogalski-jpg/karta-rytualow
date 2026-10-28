@@ -1,4 +1,4 @@
-// Panel studia: logowanie, plan dnia, pieczątki, karty bez aplikacji, sprzedaż voucherów.
+// Panel studia: logowanie, plan dnia, pieczątki, karty bez aplikacji, sprzedaż voucherów, promocje.
 (function () {
   const CFG = window.APP_CONFIG;
   const { esc, $, toast } = UI;
@@ -10,7 +10,7 @@
   let current = null;      // otwarta karta
   let currentPlan = null;  // pozycja planu dnia, z której otwarto kartę
   let lastService = '';
-  let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera
+  let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera, 'promo' = promocje
   let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro, 2 = kolejne dni
   let planMoreDay = null;  // dzień, na który „+” dodaje klientkę w widoku „Kolejne dni”
   const PLAN_AHEAD = 30;   // ile dni naprzód można układać plan
@@ -71,9 +71,10 @@
 
   // ---------- ekran główny ----------
   function tabsHtml() {
-    return `<div class="tabs" role="tablist" aria-label="Sekcje panelu">
+    return `<div class="tabs tabs--three" role="tablist" aria-label="Sekcje panelu">
       <button role="tab" data-tab="home" aria-selected="${tab === 'home'}">Klientki</button>
       <button role="tab" data-tab="sale" aria-selected="${tab === 'sale'}">Sprzedaż vouchera</button>
+      <button role="tab" data-tab="promo" aria-selected="${tab === 'promo'}">Promocje</button>
     </div>`;
   }
   function bindTabs() {
@@ -86,6 +87,7 @@
 
   async function renderHome() {
     if (tab === 'sale') return renderSale();
+    if (tab === 'promo') return renderPromos();
     if (tab === 'integr') return Integracje.render(main, () => { tab = 'home'; renderHome(); });
     main.innerHTML = `
       ${tabsHtml()}
@@ -661,6 +663,60 @@
     const p = pending.get();
     if (document.visibilityState === 'visible' && tab === 'sale' && p && $('#rStatus')) pollReceipt(p.order_id, true);
   });
+
+  // ---------- promocje (zakładka „Promocje” w aplikacji klientki) ----------
+  function renderPromos() {
+    main.innerHTML = `
+      ${tabsHtml()}
+      <h1>Promocje</h1>
+      <form class="panel" id="promoForm" style="gap:12px" novalidate>
+        <span class="eyebrow eyebrow--gold">Nowa promocja</span>
+        <div class="field"><label for="pTitle">Nazwa</label><input class="input" id="pTitle" maxlength="80" placeholder="np. Head SPA Premium −20% w listopadzie" autocomplete="off"></div>
+        <div class="field"><label for="pBody">Opis (nieobowiązkowy)</label><textarea class="input" id="pBody" rows="3" maxlength="600" placeholder="Co obejmuje, dla kogo, jak skorzystać"></textarea></div>
+        <div class="field"><label for="pUntil">Ważna do (włącznie, puste = bez końca)</label><input class="input" id="pUntil" type="date" min="${Rules.dayPL(0)}"></div>
+        <label class="check"><input type="checkbox" id="pNotify" checked> <span>Wyślij powiadomienie klientkom, które mają aplikację z powiadomieniami i zgodę na oferty</span></label>
+        <button class="btn btn--gold" type="submit" id="pSave">Opublikuj promocję</button>
+      </form>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">Promocje w aplikacji</span>
+        <div id="promoList"><div class="spinner"></div></div>
+        <p class="small" style="margin:0">Klientki widzą promocje w zakładce „Promocje” na dole aplikacji. Po dacie „ważna do” promocja sama znika.</p>
+      </section>`;
+    bindTabs();
+    $('#promoForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = $('#pTitle').value.trim(), notify = $('#pNotify').checked;
+      if (title.length < 2) { toast('Wpisz nazwę promocji.', 'error'); $('#pTitle').focus(); return; }
+      if (notify && !(await UI.ask('Opublikować promocję „' + title + '” i wysłać powiadomienie klientkom? Powiadomienia nie da się cofnąć.', 'Opublikuj'))) return;
+      const btn = $('#pSave'); btn.disabled = true;
+      try {
+        const r = await Api.promotionAdd({ title, body: $('#pBody').value, until: $('#pUntil').value || null, notify });
+        toast(r && r.pushed != null ? 'Promocja opublikowana. Powiadomienie: ' + r.pushed + ' ' + UI.plural(r.pushed, 'klientka', 'klientki', 'klientek') + '.' : 'Promocja opublikowana.', 'reward');
+        renderPromos();
+      } catch (err) { fail(err); btn.disabled = false; }
+    });
+    loadPromos();
+  }
+  async function loadPromos() {
+    const box = $('#promoList');
+    let list;
+    try { list = await Api.promotionsList(); } catch (e) { box.innerHTML = `<p class="small">${esc(e.message)}</p>`; return; }
+    if (!box.isConnected) return;
+    const until = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' });
+    box.innerHTML = list.length ? `<div class="panel panel--tight">${list.map((p) => `<div class="list-row" style="align-items:flex-start;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+          <div class="strong">${esc(p.title)}${p.ended ? ' <span class="tag">zakończona</span>' : ''}</div>
+          ${p.body ? `<div class="small" style="white-space:pre-line">${esc(p.body)}</div>` : ''}
+          <div class="small">${p.valid_until ? 'Ważna do ' + esc(until(p.valid_until)) : 'Bez daty końca'}${p.pushed != null ? ' · powiadomienie: ' + p.pushed : ''}</div>
+        </div>
+        <button class="btn btn--ghost btn--sm" data-promo-del="${p.id}" style="flex:0 0 auto;width:auto">${p.ended ? 'Usuń' : 'Zakończ'}</button>
+      </div>`).join('')}</div>` : '<p class="small">Nie ma jeszcze żadnej promocji. Klientki widzą wtedy napis, że wkrótce coś się pojawi.</p>';
+    box.querySelectorAll('[data-promo-del]').forEach((b) => b.addEventListener('click', async () => {
+      const p = list.find((x) => String(x.id) === b.dataset.promoDel);
+      if (!(await UI.ask((p.ended ? 'Usunąć' : 'Zakończyć teraz') + ' promocję „' + p.title + '”? Zniknie z aplikacji klientek.', p.ended ? 'Usuń' : 'Zakończ'))) return;
+      try { await Api.promotionRemove(p.id); toast('Promocja usunięta z aplikacji.'); loadPromos(); } catch (e) { fail(e); }
+    }));
+  }
 
   async function renderSale() {
     main.innerHTML = `

@@ -1,4 +1,4 @@
-// Aplikacja klientki: karta, urodziny, kod QR.
+// Aplikacja klientki: karta, urodziny, promocje.
 (function () {
   const CFG = window.APP_CONFIG;
   const { esc, $, toast } = UI;
@@ -94,6 +94,7 @@
     if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
     if (linkToken) toast('Witaj, ' + firstName() + '! Twoja karta jest już w aplikacji.');
     await loadRequests();
+    loadPromos();
     go(location.hash.replace('#', '') || 'card');
   }
 
@@ -346,7 +347,8 @@
 
   // ---------- nawigacja ----------
   function go(name) {
-    if (!['card', 'bday', 'qr', 'req'].includes(name)) name = 'card';
+    if (name === 'qr') name = 'promo'; // stare linki do „Mój kod”
+    if (!['card', 'bday', 'promo', 'req'].includes(name)) name = 'card';
     screen = name;
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
     nav.hidden = false;
@@ -354,13 +356,14 @@
     nav.querySelectorAll('button').forEach((b) => b.setAttribute('aria-current', b.dataset.go === name ? 'page' : 'false'));
     render();
     window.scrollTo(0, 0);
-    setPolling(name === 'qr' ? 6000 : 30000);
+    if (name === 'promo') markPromosSeen();
+    setPolling(30000);
   }
   nav.addEventListener('click', (e) => { const b = e.target.closest('button[data-go]'); if (b) go(b.dataset.go); });
 
   function render(animate) {
     if (screen === 'bday') return renderBday();
-    if (screen === 'qr') return renderQr();
+    if (screen === 'promo') return renderPromo();
     if (screen === 'req') return renderRequest();
     return renderCard(animate);
   }
@@ -433,7 +436,13 @@
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
       ${refer}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
-      <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
+      <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>
+      ${myConsent !== null && !consentBox ? `<label class="check"><input type="checkbox" id="qConsent" ${myConsent ? 'checked' : ''}> <span>${esc(CONSENT_TEXT)}</span></label>` : ''}
+      <p class="small center">Numer karty: <span class="strong">${esc(card.code)}</span>. Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
+      <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
+    $('#forgetBtn').addEventListener('click', forgetCard);
+    const qc = $('#qConsent');
+    if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); });
     const pb = $('#pushBtn');
@@ -655,11 +664,11 @@
     } catch (e) { if (!quiet) throw e; }
   }
 
-  // Zgoda na SMS i oferty: pytam raz na karcie (dla kart założonych przed formularzem ze zgodą), zmiana w „Mój kod”.
+  // Zgoda na SMS i oferty: pytam raz na karcie (dla kart założonych przed formularzem ze zgodą), zmiana na dole karty.
   const consentAsked = () => { try { return localStorage.getItem(CONSENT_KEY) === '1'; } catch (e) { return false; } };
   function loadConsent() {
     if (myConsent !== null || !CardStore.get()) return;
-    Api.myConsent(CardStore.get()).then((ok) => { myConsent = !!ok; if (screen === 'card' || screen === 'qr') render(); }).catch(() => {});
+    Api.myConsent(CardStore.get()).then((ok) => { myConsent = !!ok; if (screen === 'card' || screen === 'promo') render(); }).catch(() => {});
   }
   async function answerConsent(ok) {
     try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
@@ -711,21 +720,37 @@
       <p class="small">Rabat urodzinowy nie łączy się z innymi promocjami ani z pakietami.</p>`;
   }
 
-  // ---------- kod QR ----------
-  function renderQr() {
+  // ---------- promocje ----------
+  const PROMO_SEEN = 'tctd.promoSeen';
+  let promos = null;       // aktualne promocje studia (null = jeszcze nie wczytane)
+  const seenPromos = () => { try { return JSON.parse(localStorage.getItem(PROMO_SEEN) || '[]'); } catch (e) { return []; } };
+  function promoDot() {
+    const seen = seenPromos();
+    $('#promoDot').hidden = !(promos || []).some((p) => !seen.includes(p.id));
+  }
+  function markPromosSeen() {
+    if (!promos) return;
+    try { localStorage.setItem(PROMO_SEEN, JSON.stringify(promos.map((p) => p.id))); } catch (e) { /* bez pamięci kropka zostaje */ }
+    promoDot();
+  }
+  async function loadPromos() {
+    try { promos = await Api.promotionsActive(); } catch (e) { return; }
+    if (screen === 'promo') { markPromosSeen(); render(); } else promoDot();
+  }
+  function renderPromo() {
     loadConsent();
+    const until = (d) => new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(d + 'T00:00:00Z'));
+    const list = promos === null ? '<div class="spinner"></div>' : promos.length
+      ? promos.map((p) => `<section class="panel panel--gold" style="gap:8px">
+          <span class="strong" style="font-size:17px">${esc(p.title)}</span>
+          ${p.body ? `<span class="small" style="color:var(--text-2);white-space:pre-line">${esc(p.body)}</span>` : ''}
+          ${p.valid_until ? `<span class="eyebrow eyebrow--gold">Ważna do ${esc(until(p.valid_until))}</span>` : ''}
+        </section>`).join('')
+      : '<section class="panel" style="gap:6px"><span class="strong">Teraz nie mam aktualnych promocji</span><span class="small">Zajrzyj tu później. Gdy pojawi się nowa, dam Ci znać powiadomieniem.</span></section>';
     main.innerHTML = `
-      <h1>Mój kod</h1>
-      <div class="qr-card">
-        ${UI.qrSvg('TCTD:' + card.code, { label: 'Kod QR karty ' + card.name })}
-        <span class="name">${esc(card.name)}</span>
-        <span class="code">KARTA ${esc(card.code)}</span>
-      </div>
-      <p class="lead center">Pokaż ten kod po wizycie. Pieczątka pojawi się na Twojej karcie od razu.</p>
-      <p class="small center">Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
-      ${myConsent !== null ? `<label class="check"><input type="checkbox" id="qConsent" ${myConsent ? 'checked' : ''}> <span>${esc(CONSENT_TEXT)}</span></label>` : ''}
-      <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
-    $('#forgetBtn').addEventListener('click', forgetCard);
+      <h1>Promocje</h1>
+      ${list}
+      ${myConsent === false ? `<label class="check"><input type="checkbox" id="qConsent"> <span>${esc(CONSENT_TEXT)}</span></label>` : ''}`;
     const qc = $('#qConsent');
     if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
   }
@@ -754,6 +779,7 @@
     try {
       const fresh = await Api.getMyCard(CardStore.get());
       if (!fresh) return;
+      loadPromos();
       const reqBefore = JSON.stringify(requests);
       await loadRequests();
       if (JSON.stringify(requests) !== reqBefore && screen === 'card' && fresh.stamps === card.stamps) { card = fresh; return render(); }
