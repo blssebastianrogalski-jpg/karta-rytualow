@@ -213,6 +213,8 @@
         return view(c);
       }),
       savePushSubscription: async () => null,
+      myConsent: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return !!(c && c.sms_ok); }),
+      setMyConsent: (token, ok) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { c.sms_ok = !!ok; save(db); } return !!ok; }),
       notifyStamp: async () => null,
       googleWalletLink: async () => { throw new Error('W trybie demo Portfel Google nie działa.'); },
       saveStaffPush: async () => null,
@@ -543,6 +545,8 @@
         if (!r.ok) throw new Error(r.error || 'Nieprawidłowy kod.');
         return r.cards;
       },
+      myConsent: (token) => rpc('my_consent', { p_token: token }),
+      setMyConsent: (token, ok) => rpc('set_my_consent', { p_token: token, p_ok: !!ok }),
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       googleWalletLink: async (token) => (await invoke('portfel-google', { action: 'link', token })).url,

@@ -1,6 +1,7 @@
 // Wysyłka jednego SMS przez SMSPLANET. Wywołuje ją tylko baza (życzenia urodzinowe), nie aplikacja.
 // Ustawienia funkcji: Verify JWT wyłączone; dostęp tylko z nagłówkiem x-push-secret (ten sam sekret co send-push).
-// Korzysta z sekretów, które już są: SMSPLANET_TOKEN, SMSPLANET_FROM, PUSH_SECRET.
+// Korzysta z sekretów, które już są: SMSPLANET_TOKEN, PUSH_SECRET. Nadawca: SMSPLANET_FROM, a gdy go nie ma
+// albo jest jeszcze testowy „TEST”, zatwierdzona nazwa TwojeCialo.
 //
 // Body (POST): { phone, msg } → { ok: true, messageId } albo { ok: false, error }
 
@@ -15,6 +16,11 @@ function normalize(phone: string): string | null {
   if (d.length === 11 && d.startsWith("48")) return d;
   if ((raw.startsWith("+") || raw.startsWith("00")) && d.length >= 10 && d.length <= 15) return d;
   return null;
+}
+
+function sender(): string {
+  const from = (Deno.env.get("SMSPLANET_FROM") || "").trim();
+  return from && from.toUpperCase() !== "TEST" ? from : "TwojeCialo";
 }
 
 Deno.serve(async (req) => {
@@ -32,7 +38,7 @@ Deno.serve(async (req) => {
     const r = await fetch("https://api2.smsplanet.pl/sms", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ from: Deno.env.get("SMSPLANET_FROM") || "TEST", to, msg, clear_polish: "1" }),
+      body: new URLSearchParams({ from: sender(), to, msg, clear_polish: "1" }),
       signal: AbortSignal.timeout(20000),
     });
     const data = await r.json().catch(() => null);
