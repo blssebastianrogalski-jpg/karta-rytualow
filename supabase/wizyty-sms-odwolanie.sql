@@ -1,9 +1,10 @@
 -- Wizyty umówione przez aplikację (poza Booksy):
 --  1) SMS do klientki, gdy studio potwierdzi termin (także przełożony),
 --  2) klientka sama odwołuje wizytę na karcie: wizyta znika z planu dnia, studio dostaje powiadomienie,
---  3) klientka prosi o przełożenie: wybiera nowy termin, stara wizyta zostaje, dopóki studio nie potwierdzi nowej.
+--  3) klientka prosi o przełożenie: wybiera nowy termin, stara wizyta zostaje, dopóki studio nie potwierdzi nowej,
+--  4) przypomnienie dzień przed wizytą o 18:00: SMS + push (tylko wizyty potwierdzone z prośby w aplikacji; Booksy przypomina sam).
 -- Wizyty z Booksy zmienia się dalej w Booksy (przycisk na karcie).
--- SMS wysyła funkcja kod-sms (akcja „wizyta”, SMSPLANET), zabezpieczona tym samym sekretem co powiadomienia push.
+-- SMS wysyła funkcja sms-wyslij (SMSPLANET, z PR z urodzinami), zabezpieczona tym samym sekretem co powiadomienia push.
 -- Wymaga wcześniejszych prosby-o-termin.sql i prosby-konflikty.sql. Uruchom w Supabase → SQL Editor (można ponownie). Nie kasuje danych.
 
 alter table public.booking_requests add column if not exists move_of bigint references public.day_plan(id) on delete set null;
@@ -233,8 +234,8 @@ begin
          || coalesce(', ' || left(trim(regexp_replace(new.service, '[®™©]', '', 'g')), 38), '')
          || '. Zmiana/odwołanie: karta.twojecialotwojdobrostan.pl Twoje Ciało Twój Dobrostan';
   perform net.http_post(
-    url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/kod-sms',
-    body := jsonb_build_object('action', 'wizyta', 'phone', phone, 'msg', msg),
+    url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/sms-wyslij',
+    body := jsonb_build_object('phone', phone, 'msg', msg),
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', secret));
   return new;
 exception when others then
@@ -246,6 +247,54 @@ drop trigger if exists booking_requests_sms on public.booking_requests;
 create trigger booking_requests_sms
   after update of status on public.booking_requests
   for each row execute function public.booking_request_sms();
+
+-- ---------- Przypomnienie dzień przed wizytą (18:00 czasu polskiego) ----------
+
+alter table public.day_plan add column if not exists reminded_at timestamptz;
+
+create or replace function public.send_visit_reminders(p_now timestamptz default now())
+returns int language plpgsql security definer set search_path = public as $$
+declare secret text; loc timestamp := p_now at time zone 'Europe/Warsaw'; v record; msg text; n int := 0;
+begin
+  -- harmonogram odpala o 16:00 i 17:00 UTC; wysyłamy tylko o tej, która w Polsce jest 18:00 (czas letni / zimowy)
+  if extract(hour from loc) <> 18 then return 0; end if;
+  select decrypted_secret into secret from vault.decrypted_secrets where name = 'push_secret';
+  if secret is null then return 0; end if;
+  for v in
+    select p.id, p.card_id, p.start_at, p.service, coalesce(nullif(r.phone, ''), c.phone) as phone
+      from public.day_plan p
+      join public.cards c on c.id = p.card_id
+      join lateral (select r2.phone, r2.handled_at from public.booking_requests r2
+                     where r2.plan_id = p.id and r2.status = 'confirmed' order by r2.handled_at desc limit 1) r on true
+     where p.day = loc::date + 1 and p.status = 'planned' and p.booking_id is null
+       and p.start_at is not null and p.reminded_at is null
+       and r.handled_at < p_now - interval '6 hours'   -- świeżo potwierdzona: SMS z potwierdzeniem właśnie poszedł
+  loop
+    msg := 'Przypominam o wizycie jutro o ' || to_char(v.start_at at time zone 'Europe/Warsaw', 'HH24:MI')
+           || coalesce(', ' || left(trim(regexp_replace(v.service, '[®™©]', '', 'g')), 36), '')
+           || '. Zmiana/odwołanie: karta.twojecialotwojdobrostan.pl Twoje Ciało Twój Dobrostan';
+    perform net.http_post(
+      url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/send-push',
+      body := jsonb_build_object('card_id', v.card_id, 'title', 'Jutro Twoja wizyta',
+                'body', 'Do zobaczenia jutro o ' || to_char(v.start_at at time zone 'Europe/Warsaw', 'HH24:MI')
+                        || coalesce(' (' || v.service || ')', '') || '. Zmienić termin możesz na karcie.', 'url', './'),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', secret));
+    if v.phone is not null then
+      perform net.http_post(
+        url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/sms-wyslij',
+        body := jsonb_build_object('phone', v.phone, 'msg', msg),
+        headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', secret));
+    end if;
+    update public.day_plan set reminded_at = p_now where id = v.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke execute on function public.send_visit_reminders(timestamptz) from public, anon, authenticated;
+
+select cron.unschedule(jobname) from cron.job where jobname = 'visit-reminders';
+select cron.schedule('visit-reminders', '0 16,17 * * *', $$select public.send_visit_reminders()$$);
+-- Wyłączenie w razie potrzeby:  select cron.unschedule('visit-reminders');
 
 -- ---------- Uprawnienia ----------
 revoke all on function public.visit_cancel(text, bigint),
