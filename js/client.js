@@ -630,7 +630,8 @@
     } else {
       const d = Rules.daysToBday(card.bday_day, card.bday_month);
       status = 'Za ' + d.days + ' ' + UI.plural(d.days, 'dzień', 'dni', 'dni');
-      body = '<p class="lead">Zarezerwuj wizytę dokładnie na dzień urodzin. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>';
+      body = '<p class="lead">Zarezerwuj wizytę dokładnie na dzień urodzin. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>'
+        + `<div class="hint">Nie ma wolnego terminu w dniu urodzin? Daj mi od razu znać: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a>. Ustalę z Tobą inną datę, żeby prezent Ci nie przepadł.</div>`;
     }
     main.innerHTML = `
       <h1>Prezent urodzinowy</h1>

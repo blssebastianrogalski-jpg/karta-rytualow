@@ -420,6 +420,8 @@
         if (c.cards_completed || (c.visits || []).length) throw new Error('Pieczątki z papierowej karty można przenieść tylko przed pierwszą wizytą zapisaną w aplikacji.');
         c.stamps = Math.max(0, Math.min(9, n || 0));
       }); }),
+      smsConsent: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.sms_ok); }),
+      setSmsConsent: (id, ok) => run(() => { guard(); mutate(id, (c) => { c.sms_ok = !!ok; }); return !!ok; }),
       // sprzedaż vouchera (pokaz: bez sklepu i bez drukarki)
       vouchersList: () => run(() => { guard(); return DEMO_VOUCHERS.map((v) => ({ ...v, stamps: stampsFor(v.name) })); }),
       sellVoucher: (p) => run(() => {
@@ -588,6 +590,8 @@
       deleteCard: (id) => rpc('delete_card', { p_id: id }),
       resetToken: (id) => rpc('reset_token', { p_id: id }),
       transferStamps: (id, n) => rpc('transfer_paper_stamps', { p_id: id, p_stamps: n }),
+      smsConsent: (id) => rpc('sms_consent_get', { p_id: id }),
+      setSmsConsent: (id, ok) => rpc('sms_consent_set', { p_id: id, p_ok: !!ok }),
       // sprzedaż vouchera: przez funkcję sprzedaz-vouchera (sekret sklepu zostaje na serwerze)
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),
