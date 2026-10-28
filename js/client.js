@@ -23,6 +23,12 @@
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (screen === 'install') renderInstall(); else if (screen === 'card' && card) render(); });
   window.addEventListener('appinstalled', () => { installEvt = null; if (screen === 'install') renderInstall(true); });
 
+  const CONSENT_TEXT = 'Chcę dostawać powiadomienia w aplikacji i SMS: przypomnienia o wizycie, prezencie urodzinowym i ofertach specjalnych. Zgodę mogę wycofać w każdej chwili.';
+  const CONSENT_ASK = 'Zgoda na powiadomienia i SMS nie jest zaznaczona. Bez niej nie mogę przypomnieć Ci o wizycie, ofertach specjalnych ani o prezencie urodzinowym −20%. Zaznaczyć zgodę?';
+  const CONSENT_KEY = 'tctd.consentAsked';
+  let myConsent = null;    // zgoda na SMS i oferty (null = jeszcze nie wiem)
+  const pushSupported = () => !!CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
   const VISIT_LABEL = {
     stamp: 'Pojedynczy rytuał',
     package_buy: 'Zakup pakietu',
@@ -200,6 +206,7 @@
           <span class="small">Bez roku. Datę zmienisz później tylko w studiu.</span>
         </div>
         <label class="check"><input type="checkbox" id="jOk"> <span>Zgadzam się, aby studio ${esc(CFG.STUDIO_NAME)} przechowywało moje imię, telefon i datę urodzin, wyłącznie do prowadzenia karty rytuałów.</span></label>
+        <label class="check"><input type="checkbox" id="jMk"> <span>${CONSENT_TEXT}</span></label>
         <p class="error" id="jErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit" id="jBtn">Załóż kartę</button>
       </form>
@@ -220,6 +227,11 @@
       if (name.length < 2) return fail('Wpisz imię i nazwisko.');
       if (!UI.validBday(day, month)) return fail('Sprawdź datę urodzin (dzień i miesiąc).');
       if (!$('#jOk').checked) return fail('Zaznacz zgodę, aby założyć kartę.');
+      err.hidden = true;
+      if (!$('#jMk').checked && await UI.ask(CONSENT_ASK, 'Tak, zaznacz zgodę', false, 'Dalej bez zgody')) $('#jMk').checked = true;
+      const consent = $('#jMk').checked;
+      // okno zgody telefonu pytam od razu po stuknięciu (iPhone pozwala tylko wtedy), kartę zapisuję w tym czasie
+      const perm = consent && pushSupported() && Notification.permission === 'default' ? Notification.requestPermission().catch(() => 'default') : null;
       const btn = $('#jBtn'); btn.disabled = true; btn.textContent = 'Zakładam…';
       try {
         const ref = RefStore.get();
@@ -228,6 +240,9 @@
         CardStore.set(card.token);
         RefStore.clear();
         if (STANDALONE) Api.markAppOpen(card.token).catch(() => {});
+        myConsent = await Api.setMyConsent(card.token, consent).catch(() => null);
+        try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
+        if (perm) perm.then((r) => r === 'granted' && subscribePush(true).then(() => { if (screen === 'card') render(); }));
         toast('Witaj, ' + firstName() + '! Twoja karta jest gotowa.');
         try { card = (await Api.getMyCard(card.token)) || card; } catch (e) { /* karta z rejestracji wystarczy */ }
         go('card');
@@ -352,6 +367,7 @@
 
   // ---------- karta ----------
   function renderCard(animate) {
+    loadConsent();
     const p = UI.progressText(card.stamps);
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -360,8 +376,10 @@
       if (installEvt) install = '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span style="flex:1">Dodaj kartę do ekranu telefonu, będzie zawsze pod ręką.</span><button class="btn btn--line btn--sm" id="installBtn">Dodaj</button></div>';
       else if (ios) install = '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Dodaj kartę do ekranu telefonu: stuknij <b>Udostępnij</b> ⬆︎, a potem <b>Do ekranu początkowego</b>.</span></div>';
     }
-    const pushOffer = CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && Notification.permission === 'default';
-    if (pushOffer) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span style="flex:1">Chcesz przypomnienie o urodzinach i nowych pieczątkach?</span><button class="btn btn--line btn--sm" id="pushBtn">Włącz</button></div>';
+    const pushOffer = pushSupported() && Notification.permission === 'default';
+    const pushBox = pushOffer ? '<section class="panel panel--gold" style="gap:10px" aria-label="Powiadomienia"><span class="strong" style="font-size:17px">Włącz powiadomienia</span><span class="small" style="color:var(--text-2)">Dostaniesz przypomnienie o wizycie, nowej pieczątce i prezencie urodzinowym −20%. Po stuknięciu telefon zapyta o zgodę: wybierz <b>Zezwól</b>.</span><button class="btn btn--gold" id="pushBtn">Włącz powiadomienia</button></section>'
+      : STANDALONE && IOS && CFG.PUSH_PUBLIC_KEY && !('PushManager' in window) ? '<div class="hint">Powiadomienia na iPhonie działają od iOS 16.4. Zaktualizuj system w Ustawieniach, a potem otwórz kartę z ikony.</div>' : '';
+    const consentBox = !consentAsked() && card.phone && myConsent === false ? `<section class="panel" style="gap:10px" aria-label="Zgoda na SMS"><span class="small">${esc(CONSENT_TEXT)}</span><div class="btn-row"><button class="btn btn--ghost btn--sm" id="consentNo">Nie, dziękuję</button><button class="btn btn--gold btn--sm" id="consentYes">Zgadzam się</button></div></section>` : '';
     const pushBlocked = CFG.PUSH_PUBLIC_KEY && 'Notification' in window && Notification.permission === 'denied';
     if (pushBlocked) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Nie dostajesz przypomnień? Odblokuj powiadomienia: stuknij ikonę kłódki przy adresie, potem <b>Uprawnienia</b> → <b>Powiadomienia</b> → <b>Zezwól</b>.</span></div>';
     const visits = (card.visits || []).slice(0, 5);
@@ -393,6 +411,8 @@
       : '';
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
+      ${pushBox}
+      ${consentBox}
       ${welcome}
       ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span></button>' : ''}
       <section class="panel" aria-label="Karta rytuałów">
@@ -418,6 +438,9 @@
     if (ib) ib.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; render(); });
     const pb = $('#pushBtn');
     if (pb) pb.addEventListener('click', enablePush);
+    const cy = $('#consentYes'), cn = $('#consentNo');
+    if (cy) cy.addEventListener('click', () => answerConsent(true));
+    if (cn) cn.addEventListener('click', () => answerConsent(false));
     const rb = $('#referBtn');
     if (rb) rb.addEventListener('click', shareInvite);
     const gw = $('#gwalletBtn');
@@ -619,11 +642,29 @@
     try {
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') { UI.toast('Powiadomienia wyłączone. Możesz je włączyć później w ustawieniach telefonu.'); return render(); }
+      await subscribePush();
+    } catch (e) { UI.toast('Nie udało się włączyć powiadomień.'); }
+    render();
+  }
+  async function subscribePush(quiet) {
+    try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64ToBytes(CFG.PUSH_PUBLIC_KEY) });
       await Api.savePushSubscription(CardStore.get(), sub.toJSON());
-      UI.toast('Powiadomienia włączone.');
-    } catch (e) { UI.toast('Nie udało się włączyć powiadomień.'); }
+      if (!quiet) UI.toast('Powiadomienia włączone.');
+    } catch (e) { if (!quiet) throw e; }
+  }
+
+  // Zgoda na SMS i oferty: pytam raz na karcie (dla kart założonych przed formularzem ze zgodą), zmiana w „Mój kod”.
+  const consentAsked = () => { try { return localStorage.getItem(CONSENT_KEY) === '1'; } catch (e) { return false; } };
+  function loadConsent() {
+    if (myConsent !== null || !CardStore.get()) return;
+    Api.myConsent(CardStore.get()).then((ok) => { myConsent = !!ok; if (screen === 'card' || screen === 'qr') render(); }).catch(() => {});
+  }
+  async function answerConsent(ok) {
+    try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
+    try { myConsent = await Api.setMyConsent(CardStore.get(), ok); if (ok) UI.toast('Dziękuję! Zgoda zapisana.'); }
+    catch (e) { UI.toast('Nie udało się zapisać. Spróbuj za chwilę.'); }
     render();
   }
   function base64ToBytes(b64) {
@@ -650,7 +691,8 @@
     } else {
       const d = Rules.daysToBday(card.bday_day, card.bday_month);
       status = 'Za ' + d.days + ' ' + UI.plural(d.days, 'dzień', 'dni', 'dni');
-      body = '<p class="lead">Zarezerwuj wizytę dokładnie na dzień urodzin. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>';
+      body = '<p class="lead">Zarezerwuj wizytę dokładnie na dzień urodzin. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>'
+        + `<div class="hint">Nie ma wolnego terminu w dniu urodzin? Daj mi od razu znać: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a>. Ustalę z Tobą inną datę, żeby prezent Ci nie przepadł.</div>`;
     }
     main.innerHTML = `
       <h1>Prezent urodzinowy</h1>
@@ -671,6 +713,7 @@
 
   // ---------- kod QR ----------
   function renderQr() {
+    loadConsent();
     main.innerHTML = `
       <h1>Mój kod</h1>
       <div class="qr-card">
@@ -680,8 +723,11 @@
       </div>
       <p class="lead center">Pokaż ten kod po wizycie. Pieczątka pojawi się na Twojej karcie od razu.</p>
       <p class="small center">Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
+      ${myConsent !== null ? `<label class="check"><input type="checkbox" id="qConsent" ${myConsent ? 'checked' : ''}> <span>${esc(CONSENT_TEXT)}</span></label>` : ''}
       <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
     $('#forgetBtn').addEventListener('click', forgetCard);
+    const qc = $('#qConsent');
+    if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
   }
 
   // wylogowanie: karta znika tylko z tego urządzenia, pieczątki zostają w studiu
@@ -694,6 +740,7 @@
     } catch (e) { /* bez powiadomień nic nie szkodzi */ }
     CardStore.clear();
     card = null;
+    myConsent = null;
     clearInterval(poll);
     history.replaceState(null, '', location.pathname);
     renderJoin();
