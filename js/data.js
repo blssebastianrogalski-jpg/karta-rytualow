@@ -141,6 +141,10 @@
         { id: 1, card_id: db.cards[0].id, service: 'Head SPA Premium', pref_day: Rules.dayPL(3), pref_part: 'midday', pref_time: null, phone: '600 100 200',
           message: 'Mogę też w sobotę rano.', status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: daysAgo(0.05) }
       ];
+      db.promotions = [
+        { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo poproś o termin w aplikacji.',
+          valid_until: Rules.dayPL(30), pushed: 12, created_at: daysAgo(1) }
+      ];
       return db;
     }
     function load() {
@@ -405,6 +409,24 @@
         });
         db.plan = db.plan.filter((x) => x !== p); save(db);
       }),
+      promotionsActive: () => run(() => (load().promotions || []).filter((p) => !p.valid_until || p.valid_until >= Rules.dayPL(0))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(({ id, title, body, valid_until }) => ({ id, title, body, valid_until }))),
+      promotionsList: () => run(() => {
+        guard();
+        return (load().promotions || []).slice().sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .map((p) => Object.assign({}, p, { ended: !!p.valid_until && p.valid_until < Rules.dayPL(0) }));
+      }),
+      promotionAdd: ({ title, body, until, notify }) => run(() => {
+        guard();
+        if (!title || title.trim().length < 2) throw new Error('Wpisz nazwę promocji.');
+        if (until && until < Rules.dayPL(0)) throw new Error('Data „ważna do” już minęła.');
+        const db = load(); db.promotions = db.promotions || [];
+        const pushed = notify ? db.cards.filter((c) => c.sms_ok).length : null;
+        const p = { id: Date.now(), title: title.trim(), body: (body || '').trim() || null, valid_until: until || null, pushed, created_at: new Date().toISOString() };
+        db.promotions.push(p); save(db);
+        return { id: p.id, pushed };
+      }),
+      promotionRemove: (id) => run(() => { guard(); const db = load(); db.promotions = (db.promotions || []).filter((p) => p.id !== id); save(db); }),
       requestsList: () => run(() => {
         guard(); const db = load(); const from = Date.now() - 14 * 864e5;
         const open = (r) => ['new', 'suggested'].includes(r.status);
@@ -616,6 +638,10 @@
       slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
       myRequests: (token) => rpc('my_requests', { p_token: token }),
       requestCancel: (token, id) => rpc('request_cancel', { p_token: token, p_id: id }),
+      promotionsActive: () => rpc('promotions_active', {}),
+      promotionsList: () => rpc('promotions_list', {}),
+      promotionAdd: ({ title, body, until, notify }) => rpc('promotion_add', { p_title: title, p_body: body || null, p_until: until || null, p_notify: !!notify }),
+      promotionRemove: (id) => rpc('promotion_remove', { p_id: id }),
       requestsList: () => rpc('requests_list', {}),
       requestConfirm: (id, day, time, service) => rpc('request_confirm', { p_id: id, p_day: day, p_time: time, p_service: service || null }),
       requestDecline: (id, reply) => rpc('request_decline', { p_id: id, p_reply: reply || null }),
