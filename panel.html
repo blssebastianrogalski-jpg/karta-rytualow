@@ -31,18 +31,6 @@
   <main class="main" id="main"><div class="spinner" aria-label="Ładowanie"></div></main>
 </div>
 <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle"><div class="sheet__in" id="sheetIn"></div></div>
-<div class="scanner" id="scanner" hidden role="dialog" aria-modal="true" aria-label="Skaner kodu QR">
-  <video id="video" playsinline muted></video>
-  <div class="scanner__frame"></div>
-  <div class="scanner__bar">
-    <p class="small center" id="scanMsg" style="margin:0">Skieruj aparat na kod QR klientki.</p>
-    <form id="codeForm" class="btn-row">
-      <input class="input" id="codeInput" placeholder="lub wpisz kod karty" autocapitalize="characters" autocomplete="off" aria-label="Kod karty">
-      <button class="btn btn--line" type="submit" style="flex:0 0 auto;width:auto">Szukaj</button>
-    </form>
-    <button class="btn btn--ghost" id="scanClose">Zamknij</button>
-  </div>
-</div>
 <div class="print-card" id="printCard"></div>
 
 <script src="config.js"></script>

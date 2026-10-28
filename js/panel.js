@@ -1,4 +1,4 @@
-// Panel studia: logowanie, plan dnia, skaner, pieczątki, karty bez aplikacji, sprzedaż voucherów.
+// Panel studia: logowanie, plan dnia, pieczątki, karty bez aplikacji, sprzedaż voucherów.
 (function () {
   const CFG = window.APP_CONFIG;
   const { esc, $, toast } = UI;
@@ -90,10 +90,6 @@
     main.innerHTML = `
       ${tabsHtml()}
       <h1>Panel studia</h1>
-      <button class="btn btn--gold" id="scanBtn" style="min-height:58px">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M4 12h16"/></svg>
-        Skanuj kod QR klientki
-      </button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="reqs"></div>
@@ -120,7 +116,6 @@
       </section>
       <button class="btn btn--ghost" id="integrBtn">Integracje: Booksy i Kalendarz Google</button>`;
     bindTabs();
-    $('#scanBtn').addEventListener('click', openScanner);
     $('#newBtn').addEventListener('click', () => openNewCard());
     $('#integrBtn').addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); });
     document.querySelectorAll('[data-plan-day]').forEach((b) => b.addEventListener('click', () => {
@@ -983,94 +978,6 @@
     for (const s of stale) { try { await Api.receiptStatus(s.order_id); } catch (e) { /* zostaje stary status */ } }
     loadHistory(true);
   }
-
-  // ---------- skaner QR ----------
-  const scanner = $('#scanner');
-  const video = $('#video');
-  let stream = null, scanning = false, detector = null, canvas = null;
-
-  function loadJsQR() {
-    if (window.jsQR) return Promise.resolve();
-    return new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/jsQR.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-  }
-
-  async function openScanner() {
-    scanner.hidden = false;
-    $('#scanMsg').textContent = 'Skieruj aparat na kod QR klientki.';
-    $('#codeInput').value = '';
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      video.srcObject = stream;
-      await video.play();
-      if ('BarcodeDetector' in window) {
-        try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
-      }
-      if (!detector) await loadJsQR();
-      scanning = true;
-      tick();
-    } catch (e) {
-      $('#scanMsg').textContent = 'Nie mam dostępu do aparatu. Zezwól na aparat w przeglądarce albo wpisz kod karty poniżej.';
-    }
-  }
-  function closeScanner() {
-    scanning = false;
-    if (stream) stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-    scanner.hidden = true;
-  }
-  async function tick() {
-    if (!scanning) return;
-    let text = null;
-    try {
-      if (video.readyState >= 2) {
-        if (detector) {
-          const codes = await detector.detect(video);
-          if (codes.length) text = codes[0].rawValue;
-        } else {
-          canvas = canvas || document.createElement('canvas');
-          const w = Math.min(640, video.videoWidth), h = Math.round(video.videoHeight * (w / video.videoWidth));
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d', { willReadFrequently: true });
-          ctx.drawImage(video, 0, 0, w, h);
-          const r = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
-          if (r) text = r.data;
-        }
-      }
-    } catch (e) { /* kolejna klatka */ }
-    if (text) return handleCode(text);
-    setTimeout(tick, 200);
-  }
-  async function handleCode(text) {
-    let code = String(text).trim();
-    const m = code.match(/^TCTD:([A-Z0-9]{4,10})$/i);
-    if (m) code = m[1];
-    if (!/^[A-Z0-9]{4,10}$/i.test(code)) {
-      $('#scanMsg').textContent = 'To nie jest kod karty rytuałów. Spróbuj jeszcze raz.';
-      if (scanning) setTimeout(tick, 1200);
-      return;
-    }
-    if (navigator.vibrate) navigator.vibrate(60);
-    try {
-      const c = await Api.findCard(code);
-      if (!c) {
-        $('#scanMsg').textContent = 'Nie znaleziono karty ' + code.toUpperCase() + '.';
-        if (scanning) setTimeout(tick, 1500);
-        return;
-      }
-      closeScanner();
-      current = c;
-      // jeśli klientka jest w dzisiejszym planie, podepnij wizytę
-      currentPlan = null;
-      try {
-        const p = (await Api.planList()).find((x) => x.card_id === c.id && x.status === 'planned');
-        if (p) { currentPlan = p.id; if (p.service) lastService = p.service; }
-      } catch (e) { /* bez planu */ }
-      toast('Zeskanowano: ' + c.name);
-      renderCard();
-    } catch (e) { fail(e); if (scanning) setTimeout(tick, 1500); }
-  }
-  $('#scanClose').addEventListener('click', closeScanner);
-  $('#codeForm').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#codeInput').value.trim(); if (v) handleCode(v); });
 
   start();
 })();
