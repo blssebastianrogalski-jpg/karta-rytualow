@@ -58,6 +58,35 @@ returns text language sql immutable as $$
   select initcap(split_part(trim(coalesce(p_name, '')), ' ', 1))
 $$;
 
+-- Ciepłe zwrócenie się po imieniu (wołacz zdrobnienia): Anna → Aniu, Katarzyna → Kasiu.
+-- Nieznane imię: Kasia → Kasiu, Renatka → Renatko, Marta → Marto; imię męskie spoza listy zostaje bez zmian.
+create or replace function public.call_name(p_name text)
+returns text language plpgsql immutable as $$
+declare n text := public.first_name(p_name); v text;
+begin
+  select x.v into v from (values
+    ('Anna','Aniu'),('Ania','Aniu'),('Hanna','Haniu'),('Katarzyna','Kasiu'),('Kasia','Kasiu'),('Magdalena','Madziu'),('Magda','Madziu'),
+    ('Małgorzata','Gosiu'),('Gosia','Gosiu'),('Joanna','Asiu'),('Asia','Asiu'),('Barbara','Basiu'),('Agnieszka','Agnieszko'),
+    ('Marta','Martusiu'),('Renata','Renatko'),('Justyna','Justynko'),('Ewa','Ewuniu'),('Dorota','Dorotko'),('Zuzanna','Zuziu'),
+    ('Sylwia','Sylwio'),('Paulina','Paulinko'),('Patrycja','Patrycjo'),('Monika','Moniko'),('Karolina','Karolinko'),('Jolanta','Jolu'),
+    ('Iwona','Iwonko'),('Daria','Dario'),('Bożena','Bożenko'),('Bożenna','Bożenko'),('Aleksandra','Olu'),('Ola','Olu'),('Adrianna','Adrianno'),
+    ('Beata','Beatko'),('Elżbieta','Elu'),('Ela','Elu'),('Natalia','Natalko'),('Weronika','Weroniko'),('Julia','Julio'),('Alicja','Alu'),
+    ('Emilia','Emilko'),('Kinga','Kingo'),('Izabela','Izo'),('Aneta','Anetko'),('Edyta','Edytko'),('Klaudia','Klaudio'),('Wioletta','Wioletko'),
+    ('Teresa','Tereso'),('Grażyna','Grażynko'),('Danuta','Danusiu'),('Halina','Halinko'),('Krystyna','Krysiu'),('Urszula','Ulu'),
+    ('Wiktoria','Wiktorio'),('Maria','Marysiu'),('Marysia','Marysiu'),('Martyna','Martynko'),('Kamila','Kamilko'),('Dominika','Dominiko'),
+    ('Angelika','Angeliko'),('Ilona','Ilonko'),('Lucyna','Lucynko'),('Anita','Anitko'),('Milena','Milenko'),('Oliwia','Oliwio'),
+    ('Gabriela','Gabrysiu'),('Ewelina','Ewelinko'),('Marzena','Marzenko'),('Sandra','Sandro'),('Mirosława','Mirko'),('Zofia','Zosiu'),
+    ('Wojtek','Wojtku'),('Wojciech','Wojtku'),('Radosław','Radku'),('Przemysław','Przemku'),('Marek','Marku'),('Piotr','Piotrze'),
+    ('Tomasz','Tomku'),('Paweł','Pawle'),('Michał','Michale'),('Krzysztof','Krzysiu'),('Adam','Adamie'),('Łukasz','Łukaszu'),
+    ('Jakub','Kubo'),('Kamil','Kamilu'),('Mateusz','Mateuszu'),('Andrzej','Andrzeju'),('Robert','Robercie'),('Rafał','Rafale'),
+    ('Dariusz','Darku'),('Grzegorz','Grzesiu'),('Jan','Janku'),('Marcin','Marcinie'),('Bartosz','Bartku'),('Sebastian','Sebastianie')
+  ) as x(k, v) where x.k = n;
+  if v is not null then return v; end if;
+  if n ~ 'ia$' then return regexp_replace(n, 'a$', 'u'); end if;
+  if n ~ 'a$' then return regexp_replace(n, 'a$', 'o'); end if;
+  return n;
+end $$;
+
 create or replace function public.push_to_card(p_card uuid, p_title text, p_body text, p_secret text)
 returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -70,16 +99,18 @@ begin
 end $$;
 revoke execute on function public.push_to_card(uuid, text, text, text) from public, anon, authenticated;
 
-create or replace function public.sms_to(p_phone text, p_msg text, p_secret text)
+-- p_polish = true: SMS z polskimi znakami (do 70 znaków na część zamiast 160).
+drop function if exists public.sms_to(text, text, text);
+create or replace function public.sms_to(p_phone text, p_msg text, p_secret text, p_polish boolean default false)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   perform net.http_post(
     url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/sms-wyslij',
-    body := jsonb_build_object('phone', p_phone, 'msg', p_msg),
+    body := jsonb_build_object('phone', p_phone, 'msg', p_msg, 'polish', p_polish),
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', p_secret)
   );
 end $$;
-revoke execute on function public.sms_to(text, text, text) from public, anon, authenticated;
+revoke execute on function public.sms_to(text, text, text, boolean) from public, anon, authenticated;
 
 -- ---------- Przypomnienie 14 dni przed urodzinami, 20:30 (push + SMS ze zgodą) ----------
 create table if not exists public.birthday_reminder_log (
@@ -150,14 +181,14 @@ create table if not exists public.birthday_wish_log (
 alter table public.birthday_wish_log enable row level security;
 
 -- Tekst życzeń, bez wzmianki o rabacie (w dniu urodzin to już za późno). p_gift zostaje na przyszłość.
--- SMS bez polskich znaków i emoji, żeby zmieścił się w jednej wiadomości.
+-- SMS z polskimi znakami (2 części SMS), bez emoji.
 create or replace function public.birthday_wish_text(p_name text, p_gift boolean, out title text, out body text, out sms text)
 language plpgsql immutable as $$
-declare imie text := public.first_name(p_name);
+declare imie text := public.call_name(p_name);
 begin
-  title := 'Wszystkiego najlepszego, ' || imie || '! 🎂';
-  body  := 'Życzę Ci spokoju, czułości dla siebie i chwil tylko dla Ciebie.';
-  sms   := imie || ', wszystkiego najlepszego! Zycze Ci spokoju, czulosci dla siebie i chwil tylko dla Ciebie. Justyna';
+  title := imie || ', wszystkiego najlepszego! 🎂';
+  body  := 'Życzę Ci spokoju, czułości dla siebie i chwil tylko dla Ciebie. Dużo Dobrostanu, Justyna';
+  sms   := imie || ', wszystkiego najlepszego! Życzę Ci spokoju, czułości dla siebie i chwil tylko dla Ciebie. Dużo Dobrostanu, Justyna';
 end $$;
 
 create or replace function public.send_birthday_wishes(p_at timestamptz default now())
@@ -183,7 +214,7 @@ begin
     if not has_push and not do_sms then continue; end if;
 
     if has_push then perform public.push_to_card(c.id, t.title, t.body, secret); end if;
-    if do_sms then perform public.sms_to(c.phone, t.sms, secret); end if;
+    if do_sms then perform public.sms_to(c.phone, t.sms, secret, true); end if;
     insert into public.birthday_wish_log (card_id, bday, push, sms) values (c.id, today, has_push, do_sms);
     n := n + 1;
   end loop;
@@ -207,7 +238,7 @@ begin
   if p_sms then
     perform net.http_post(
       url := 'https://pqvndgttgzaosjqjtxbg.supabase.co/functions/v1/sms-wyslij',
-      body := jsonb_build_object('phone', '500694094', 'msg', t.sms),
+      body := jsonb_build_object('phone', '500694094', 'msg', t.sms, 'polish', true),
       headers := jsonb_build_object('Content-Type', 'application/json', 'x-push-secret', secret)
     );
   end if;

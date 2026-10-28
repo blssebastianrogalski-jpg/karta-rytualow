@@ -3,7 +3,8 @@
 // Korzysta z sekretów, które już są: SMSPLANET_TOKEN, PUSH_SECRET. Nadawca: SMSPLANET_FROM, a gdy go nie ma
 // albo jest jeszcze testowy „TEST”, zatwierdzona nazwa TwojeCialo.
 //
-// Body (POST): { phone, msg } → { ok: true, messageId } albo { ok: false, error }
+// Body (POST): { phone, msg, polish? } → { ok: true, messageId } albo { ok: false, error }
+// polish: true = z polskimi znakami (część SMS ma wtedy 70 znaków), inaczej litery bez ogonków (160 znaków).
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
@@ -38,7 +39,7 @@ Deno.serve(async (req) => {
     const r = await fetch("https://api2.smsplanet.pl/sms", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ from: sender(), to, msg, clear_polish: "1" }),
+      body: new URLSearchParams({ from: sender(), to, msg, clear_polish: body.polish === true ? "0" : "1" }),
       signal: AbortSignal.timeout(20000),
     });
     const data = await r.json().catch(() => null);
