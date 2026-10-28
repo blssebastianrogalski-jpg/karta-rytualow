@@ -145,10 +145,6 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 .back { background: none; border: none; color: var(--gold); font-weight: 600; font-size: 15px; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0; }
 
 /* Skaner */
-.scanner { position: fixed; inset: 0; z-index: 40; background: #000; display: flex; flex-direction: column; }
-.scanner video { flex: 1; width: 100%; object-fit: cover; min-height: 0; }
-.scanner__frame { position: absolute; top: 50%; left: 50%; width: min(70vw, 280px); aspect-ratio: 1; transform: translate(-50%, -60%); border: 3px solid var(--gold); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); pointer-events: none; }
-.scanner__bar { padding: 16px 20px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
 
 /* Panel – lista klientek */
 .client { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
