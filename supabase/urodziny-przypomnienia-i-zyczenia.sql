@@ -149,18 +149,15 @@ create table if not exists public.birthday_wish_log (
 );
 alter table public.birthday_wish_log enable row level security;
 
--- Tekst życzeń. p_gift = rabat −20% jeszcze niewykorzystany w tym roku.
+-- Tekst życzeń, bez wzmianki o rabacie (w dniu urodzin to już za późno). p_gift zostaje na przyszłość.
 -- SMS bez polskich znaków i emoji, żeby zmieścił się w jednej wiadomości.
 create or replace function public.birthday_wish_text(p_name text, p_gift boolean, out title text, out body text, out sms text)
 language plpgsql immutable as $$
 declare imie text := public.first_name(p_name);
 begin
   title := 'Wszystkiego najlepszego, ' || imie || '! 🎂';
-  body  := 'Życzę Ci spokoju, czułości dla siebie i chwil tylko dla Ciebie.'
-           || case when p_gift then ' W prezencie czeka na Ciebie rytuał −20%.' else '' end;
-  sms   := imie || ', wszystkiego najlepszego! Zycze Ci spokoju, czulosci dla siebie i chwil tylko dla Ciebie.'
-           || case when p_gift then ' W prezencie czeka na Ciebie rytual -20%.' else '' end
-           || ' Justyna';
+  body  := 'Życzę Ci spokoju, czułości dla siebie i chwil tylko dla Ciebie.';
+  sms   := imie || ', wszystkiego najlepszego! Zycze Ci spokoju, czulosci dla siebie i chwil tylko dla Ciebie. Justyna';
 end $$;
 
 create or replace function public.send_birthday_wishes(p_at timestamptz default now())
