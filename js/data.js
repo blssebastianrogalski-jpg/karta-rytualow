@@ -131,6 +131,7 @@
         ]
       };
       db.cards[0].email = 'anna.kowalska@example.com';
+      db.cards.slice(0, 4).forEach((c) => { c.sms_ok = true; });
       const day = Rules.dayPL(0);
       db.plan = [
         { id: 1, card_id: db.cards[3].id, day, service: 'Masaż gorącą świecą', status: 'planned' },
@@ -140,6 +141,15 @@
       db.requests = [
         { id: 1, card_id: db.cards[0].id, service: 'Head SPA Premium', pref_day: Rules.dayPL(3), pref_part: 'midday', pref_time: null, phone: '600 100 200',
           message: 'Mogę też w sobotę rano.', status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: daysAgo(0.05) }
+      ];
+      // wolne terminy (jak wolne-terminy.sql): jutro rano luka czeka na decyzję studia, po południu odwołanie wysłane klientkom
+      const tm = Rules.dayPL(1), at = (hm) => new Date(tm + 'T' + hm + ':00').toISOString();
+      db.plan.push(
+        { id: 4, card_id: db.cards[3].id, day: tm, service: 'Masaż gorącą świecą', status: 'planned', start_at: at('09:00') },
+        { id: 5, card_id: db.cards[1].id, day: tm, service: 'Head SPA Premium', status: 'planned', start_at: at('16:00') });
+      db.gaps = [
+        { id: 1, kind: 'daily', day: tm, start_at: at('10:30'), end_at: at('13:30'), status: 'ask', info: 'zwykła luka w grafiku', push_n: null, sms_n: null, sent_at: null, created_at: daysAgo(0.1) },
+        { id: 2, kind: 'cancel', day: tm, start_at: at('14:00'), end_at: at('15:30'), status: 'open', info: 'odwołała: Ewa Zielińska, Kobido UP®', push_n: 9, sms_n: 14, sent_at: daysAgo(0.02), created_at: daysAgo(0.03) }
       ];
       db.promotions = [
         { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo poproś o termin w aplikacji.',
@@ -185,6 +195,25 @@
         c.stamps += 1; c.bonus_stamps -= 1;
         c.visits.unshift({ kind: 'referral', service: null, discount: 0, created_at: new Date().toISOString() });
       }
+    }
+    // wolne terminy: godziny, od których zmieści się najkrótszy rytuał (45 min), i ile minut jest od nich wolnych
+    const GAP_MIN = 45;
+    function gapStarts(db, g) {
+      const out = [];
+      for (let t = new Date(g.start_at); +t + GAP_MIN * 6e4 <= +new Date(g.end_at); t = new Date(+t + 18e5)) {
+        if (Slots.check(db, t, GAP_MIN) !== 'ok') continue;
+        let m = GAP_MIN;
+        while (+t + (m + 15) * 6e4 <= +new Date(g.end_at) && Slots.check(db, t, m + 15) === 'ok') m += 15;
+        out.push({ at: t.toISOString(), max: m });
+      }
+      return out;
+    }
+    // dodatkowa pieczątka po wizycie z wolnego terminu (jak wyzwalacz day_plan_gap_bonus)
+    function gapBonus(db, c, p) {
+      if (!p || !p.gap_offer_id || p.gap_bonus_at) return;
+      p.gap_bonus_at = new Date().toISOString();
+      if (c.stamps < 10 && c.stamps !== 4 && c.stamps !== 9) { c.stamps += 1; c.visits.unshift({ kind: 'gap', service: null, discount: 0, created_at: p.gap_bonus_at }); }
+      else c.bonus_stamps = (c.bonus_stamps || 0) + 1;
     }
     function addVisit(db, c, v) {
       if (v.kind === 'stamp' && !v.discount && c.ref_welcome) { v.discount = 10; c.ref_welcome = false; }
@@ -298,7 +327,7 @@
           d = Rules.discountFor(c.stamps);
         }
         addVisit(db, c, { kind: mode, service: service || null, discount: d, created_at: new Date().toISOString() });
-        if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) { p.status = mode; if (service) p.service = service; } }
+        if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) { p.status = mode; if (service) p.service = service; gapBonus(db, c, p); } }
       }); }),
       removeStamp: (id) => run(() => { guard(); return mutate(id, (c) => {
         if (c.stamps <= 0) throw new Error('Na karcie nie ma pieczątek.');
@@ -316,7 +345,7 @@
         if (c.birthday_used_year === y) throw new Error('Rabat urodzinowy został już wykorzystany w tym roku.');
         c.birthday_used_year = y;
         addVisit(db, c, { kind: 'birthday', service: service || null, discount: 20, created_at: new Date().toISOString() });
-        if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = 'birthday'; }
+        if (planId) { const p = (db.plan || []).find((x) => x.id === planId); if (p) { p.status = 'birthday'; gapBonus(db, c, p); } }
       }); }),
       planList: (day) => run(() => {
         guard();
@@ -408,6 +437,49 @@
           if (r.move_of === p.id && ['new', 'suggested'].includes(r.status)) Object.assign(r, { status: 'cancelled', handled_at: now });
         });
         db.plan = db.plan.filter((x) => x !== p); save(db);
+      }),
+      // wolne terminy (jak wolne-terminy.sql)
+      myGapOffers: (token) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        if (!c) return [];
+        return (db.gaps || []).filter((g) => g.status === 'open' && g.day >= Rules.dayPL(0))
+          .map((g) => ({ id: g.id, kind: g.kind, day: g.day, start_at: g.start_at, end_at: g.end_at, starts: gapStarts(db, g), durations: Slots.dur, default_min: 60 }))
+          .filter((g) => g.starts.length).sort((a, b) => a.start_at.localeCompare(b.start_at));
+      }),
+      gapTake: (token, offerId, start, service) => run(() => {
+        const db = load(); const c = db.cards.find((x) => x.token === token);
+        if (!c) throw new Error('Nie znaleziono karty.');
+        const g = (db.gaps || []).find((x) => x.id === offerId);
+        if (!g || g.status !== 'open') throw new Error('Ten termin jest już zajęty. Dziękuję, że chciałaś!');
+        if (!service) throw new Error('Wybierz rytuał.');
+        const m = Slots.minutes(service), t = new Date(start);
+        if (t < new Date(g.start_at) || +t + m * 6e4 > +new Date(g.end_at)) throw new Error('Ten rytuał nie zmieści się w wolnym terminie. Wybierz krótszy albo inną godzinę.');
+        if (Slots.check(db, t, m) !== 'ok') throw new Error('Ktoś właśnie zajął tę godzinę. Wybierz inną, jeśli jest.');
+        const p = { id: Date.now(), card_id: c.id, day: g.day, service, start_at: t.toISOString(), status: 'planned', gap_offer_id: g.id };
+        db.plan.push(p);
+        db.requests = db.requests || [];
+        db.requests.unshift({ id: Date.now() + 1, card_id: c.id, service, pref_day: g.day, pref_part: 'any', pref_time: Slots.hm(t), phone: c.phone || '', message: null,
+          status: 'confirmed', confirmed_at: p.start_at, plan_id: p.id, reply: 'Wolny termin z oferty', handled_at: new Date().toISOString(), created_at: new Date().toISOString() });
+        if (!gapStarts(db, g).length) g.status = 'closed';
+        save(db);
+        return { plan_id: p.id, day: g.day, start_at: p.start_at, service };
+      }),
+      gapList: () => run(() => {
+        guard(); const db = load();
+        return (db.gaps || []).slice().sort((a, b) => (b.status === 'ask') - (a.status === 'ask') || b.day.localeCompare(a.day) || a.start_at.localeCompare(b.start_at))
+          .map((g) => Object.assign({}, g, { taken: (db.plan || []).filter((p) => p.gap_offer_id === g.id).map((p) => {
+            const c = db.cards.find((x) => x.id === p.card_id) || {};
+            return { card_id: p.card_id, name: c.name, start_at: p.start_at, service: p.service, status: p.status, bonus: !!p.gap_bonus_at };
+          }) }));
+      }),
+      gapDecide: (day, send) => run(() => {
+        guard(); const db = load();
+        const ask = (db.gaps || []).filter((g) => g.day === day && g.status === 'ask');
+        if (!ask.length) throw new Error('Te terminy są już załatwione.');
+        const n = send ? db.cards.filter((c) => c.sms_ok && !(db.plan || []).some((p) => p.card_id === c.id && p.day === day && p.status === 'planned')).length : 0;
+        ask.forEach((g) => Object.assign(g, send ? { status: 'open', sent_at: new Date().toISOString(), push_n: n, sms_n: n } : { status: 'skipped' }));
+        save(db);
+        return { sent: n };
       }),
       promotionsActive: () => run(() => (load().promotions || []).filter((p) => !p.valid_until || p.valid_until >= Rules.dayPL(0))
         .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(({ id, title, body, valid_until }) => ({ id, title, body, valid_until }))),
@@ -638,6 +710,10 @@
       slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
       myRequests: (token) => rpc('my_requests', { p_token: token }),
       requestCancel: (token, id) => rpc('request_cancel', { p_token: token, p_id: id }),
+      myGapOffers: (token) => rpc('my_gap_offers', { p_token: token }),
+      gapTake: (token, offerId, start, service) => rpc('gap_take', { p_token: token, p_offer: offerId, p_start: start, p_service: service }),
+      gapList: () => rpc('gap_list', {}),
+      gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       promotionsActive: () => rpc('promotions_active', {}),
       promotionsList: () => rpc('promotions_list', {}),
       promotionAdd: ({ title, body, until, notify }) => rpc('promotion_add', { p_title: title, p_body: body || null, p_until: until || null, p_notify: !!notify }),

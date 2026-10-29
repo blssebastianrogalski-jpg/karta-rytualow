@@ -8,6 +8,8 @@
   let requests = [];       // prośby o termin (dla klientek bez Booksy)
   let retryOf = null;      // „inny dzień” po propozycji wolnych godzin
   let moveOf = null;       // przełożenie wizyty umówionej przez aplikację (id z planu dnia)
+  let gaps = [];           // wolne terminy po odwołaniu albo z grafiku (kto pierwszy, ten lepszy)
+  let gapPick = null;      // wybrana godzina z wolnego terminu: { id, at, max }
   let screen = 'card';
   let poll = null;
   let installEvt = null;
@@ -34,7 +36,8 @@
     package_buy: 'Zakup pakietu',
     package_visit: 'Wizyta z pakietu',
     birthday: 'Rytuał urodzinowy −20%',
-    referral: 'Pieczątka za polecenie'
+    referral: 'Pieczątka za polecenie',
+    gap: 'Dodatkowa pieczątka za wolny termin'
   };
 
   // kod polecającej z linku …/?p=KOD (czeka, aż koleżanka założy kartę)
@@ -93,7 +96,7 @@
     }
     if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
     if (linkToken) toast('Witaj, ' + firstName() + '! Twoja karta jest już w aplikacji.');
-    await loadRequests();
+    await Promise.all([loadRequests(), loadGaps()]);
     loadPromos();
     go(location.hash.replace('#', '') || 'card');
   }
@@ -348,6 +351,7 @@
   // ---------- nawigacja ----------
   function go(name) {
     if (name === 'qr') name = 'promo'; // stare linki do „Mój kod”
+    const toGap = name === 'wolne';    // powiadomienie o wolnym terminie
     if (!['card', 'bday', 'promo', 'req'].includes(name)) name = 'card';
     screen = name;
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
@@ -356,6 +360,8 @@
     nav.querySelectorAll('button').forEach((b) => b.setAttribute('aria-current', b.dataset.go === name ? 'page' : 'false'));
     render();
     window.scrollTo(0, 0);
+    const gb = toGap && $('#gapBox');
+    if (gb) gb.scrollIntoView({ block: 'start' });
     if (name === 'promo') markPromosSeen();
     setPolling(30000);
   }
@@ -403,10 +409,10 @@
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
-    const refer = refCount || card.bonus_stamps ? `<section class="panel" style="gap:8px" aria-label="Twoje polecenia">
-        <span class="eyebrow eyebrow--gold">Twoje polecenia</span>
-        <span class="small">Zaproszone koleżanki: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>
-        ${card.bonus_stamps ? `<span class="small gold">Czeka na Ciebie ${card.bonus_stamps} ${UI.plural(card.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopiszę ${card.bonus_stamps > 1 ? 'je' : 'ją'} po Twoim najbliższym rytuale, żeby nie przepadł Ci rabat.</span>` : ''}
+    const refer = refCount || card.bonus_stamps ? `<section class="panel" style="gap:8px" aria-label="${refCount ? 'Twoje polecenia' : 'Dodatkowe pieczątki'}">
+        <span class="eyebrow eyebrow--gold">${refCount ? 'Twoje polecenia' : 'Dodatkowe pieczątki'}</span>
+        ${refCount ? `<span class="small">Zaproszone koleżanki: ${refCount} · ${refDone ? 'pieczątki za polecenie: ' + refDone : 'czekam na ich pierwszą wizytę'}</span>` : ''}
+        ${card.bonus_stamps ? `<span class="small gold">Czeka na Ciebie ${card.bonus_stamps} ${UI.plural(card.bonus_stamps, 'dodatkowa pieczątka', 'dodatkowe pieczątki', 'dodatkowych pieczątek')}. Dopiszę ${card.bonus_stamps > 1 ? 'je' : 'ją'} po Twoim najbliższym rytuale, żeby nie przepadł Ci rabat.</span>` : ''}
       </section>` : '';
     const walletOn = CFG.GOOGLE_WALLET === true || (CFG.GOOGLE_WALLET === 'test' && (CFG.GOOGLE_WALLET_TEST_CARDS || []).includes(card.code));
     const wallet = walletOn && !Api.demo && /android/i.test(navigator.userAgent)
@@ -414,6 +420,7 @@
       : '';
     main.innerHTML = `
       <div class="hello"><small>${UI.greeting()},</small><h1>${esc(firstName())}</h1></div>
+      ${gapBox()}
       ${pushBox}
       ${consentBox}
       ${welcome}
@@ -463,6 +470,61 @@
     main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); }));
     main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; moveOf = null; go('req'); }));
     main.querySelectorAll('[data-req-pick]').forEach((b) => b.addEventListener('click', () => pickSlot(+b.dataset.reqPick, b.dataset.at)));
+    main.querySelectorAll('[data-gap-at]').forEach((b) => b.addEventListener('click', () => {
+      gapPick = { id: +b.dataset.gapId, at: b.dataset.gapAt, max: +b.dataset.gapMax };
+      render();
+      const sel = $('#gService'); if (sel) sel.focus();
+    }));
+    const gt = $('#gapTakeBtn');
+    if (gt) gt.addEventListener('click', takeGap);
+  }
+
+  // ---------- wolny termin (po odwołaniu albo luka w grafiku): kto pierwszy, ten lepszy ----------
+  async function loadGaps() {
+    try { gaps = (await Api.myGapOffers(CardStore.get())) || []; } catch (e) { gaps = []; } // baza jeszcze bez wolnych terminów
+    if (gapPick && !gaps.some((g) => g.id === gapPick.id && g.starts.some((x) => x.at === gapPick.at))) gapPick = null;
+  }
+  const hm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+  const gapDay = (d) => (d === Rules.dayPL(0) ? 'Dziś · ' : d === Rules.dayPL(1) ? 'Jutro · ' : '') + dayName(d);
+  function gapFits(g, max) {
+    return (CFG.SERVICES || []).filter((x) => ((g.durations || {})[x] || g.default_min || 60) <= max);
+  }
+  function gapBox() {
+    if (!gaps.length) return '';
+    const days = [...new Set(gaps.map((g) => g.day))];
+    const pick = gapPick && gaps.find((g) => g.id === gapPick.id);
+    return `<section class="panel panel--gold" style="gap:10px" id="gapBox" aria-label="Wolny termin">
+      <span class="eyebrow eyebrow--gold">Zwolnił się termin · kto pierwszy, ten lepszy</span>
+      <span class="small" style="color:var(--text-2)">Wybierz godzinę i rytuał. Termin jest Twój od razu, a po wizycie dostaniesz <b>dodatkową pieczątkę</b>.</span>
+      ${days.map((d) => {
+        const seen = new Set();
+        const starts = gaps.filter((g) => g.day === d).flatMap((g) => g.starts.map((x) => Object.assign({ id: g.id }, x)))
+          .filter((x) => !seen.has(x.at) && seen.add(x.at)).sort((a, b) => a.at.localeCompare(b.at));
+        return `<div style="display:flex;flex-direction:column;gap:8px">
+          <span class="strong" style="font-size:17px">${esc(gapDay(d).replace(/^./, (ch) => ch.toUpperCase()))}</span>
+          <div class="chips" role="radiogroup" aria-label="Wolne godziny" style="flex-wrap:wrap">${starts.map((x) => `<button type="button" class="pick" role="radio" aria-checked="${!!gapPick && gapPick.at === x.at}" data-gap-id="${x.id}" data-gap-at="${esc(x.at)}" data-gap-max="${x.max}" style="min-height:44px;padding:8px 14px">${esc(hm(x.at))}</button>`).join('')}</div>
+        </div>`;
+      }).join('')}
+      ${pick ? (() => {
+        const fits = gapFits(pick, gapPick.max);
+        return fits.length ? `<div class="field"><label for="gService">Rytuał o ${esc(hm(gapPick.at))} (zmieści się do ${gapPick.max} min)</label><select class="input" id="gService">${fits.map((x) => `<option>${esc(x)}</option>`).join('')}</select></div>
+          <button class="btn btn--gold" id="gapTakeBtn">Biorę ${esc(hm(gapPick.at))}</button>`
+          : '<span class="small">O tej godzinie zmieści się tylko krótki rytuał. Zadzwoń, dobiorę coś dla Ciebie: <a href="tel:' + esc(CFG.PHONE.replace(/\s/g, '')) + '">' + esc(CFG.PHONE) + '</a></span>';
+      })() : ''}
+    </section>`;
+  }
+  async function takeGap() {
+    const sel = $('#gService'), btn = $('#gapTakeBtn');
+    if (!gapPick || !sel) return;
+    btn.disabled = true; btn.textContent = 'Rezerwuję…';
+    try {
+      const r = await Api.gapTake(CardStore.get(), gapPick.id, gapPick.at, sel.value);
+      gapPick = null;
+      try { card = (await Api.getMyCard(CardStore.get())) || card; } catch (e2) { /* zostaje stara karta */ }
+      toast('Termin jest Twój: ' + slotLabel(r.start_at) + '. Dodatkową pieczątkę dopiszę po wizycie.', 'reward');
+    } catch (e) { toast(e.message, 'error'); }
+    await loadGaps();
+    render();
   }
 
   // ---------- prośba o termin (dla klientek bez Booksy) ----------
@@ -780,16 +842,18 @@
       const fresh = await Api.getMyCard(CardStore.get());
       if (!fresh) return;
       loadPromos();
-      const reqBefore = JSON.stringify(requests);
-      await loadRequests();
-      if (JSON.stringify(requests) !== reqBefore && screen === 'card' && fresh.stamps === card.stamps) { card = fresh; return render(); }
+      const reqBefore = JSON.stringify(requests) + JSON.stringify(gaps);
+      await Promise.all([loadRequests(), loadGaps()]);
+      if (JSON.stringify(requests) + JSON.stringify(gaps) !== reqBefore && screen === 'card' && fresh.stamps === card.stamps) { card = fresh; return render(); }
       const before = card.stamps, bdayBefore = card.birthday_used_year, visitsBefore = (card.visits || []).length;
       card = fresh;
       if (fresh.stamps > before) {
         const n = fresh.stamps;
         const d = Rules.discountFor(n);
         const viaRef = (fresh.visits || [])[0] && fresh.visits[0].kind === 'referral';
-        if (viaRef) toast('Koleżanka była na rytuale. Masz pieczątkę za polecenie! Dziękuję!', 'reward');
+        const viaGap = (fresh.visits || [])[0] && fresh.visits[0].kind === 'gap';
+        if (viaGap) toast('Dodatkowa pieczątka za wolny termin! Dziękuję!', 'reward');
+        else if (viaRef) toast('Koleżanka była na rytuale. Masz pieczątkę za polecenie! Dziękuję!', 'reward');
         else toast(d ? 'Pieczątka nr ' + n + '! Ten rytuał: −' + d + '%' : 'Nowa pieczątka! Masz już ' + n + ' / 10.', d ? 'reward' : '');
         screen = 'card';
         go('card');
