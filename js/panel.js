@@ -29,6 +29,7 @@
     package_visit: 'Wizyta z pakietu',
     birthday: 'Rytuał urodzinowy −20%',
     referral: 'Pieczątka za polecenie',
+    gap: 'Dodatkowa pieczątka za wolny termin',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
@@ -94,6 +95,7 @@
       <h1>Panel studia</h1>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
+      <div id="gaps"></div>
       <div id="reqs"></div>
       <div id="bdays"></div>
       <div id="refs"></div>
@@ -139,6 +141,51 @@
     loadRefs().then(loadPlan);
     loadList();
     loadRequests();
+    loadGaps();
+  }
+
+  // ---------- wolne terminy (po odwołaniu wysyłają się same, zwykłe luki po decyzji studia) ----------
+  const GAP_STATUS = { pending: 'wyślę za kilka minut', open: 'wysłana, czeka na chętną', closed: 'zajęta albo minęła', skipped: 'nie wysłana' };
+  let gaps = [];
+  async function loadGaps() {
+    const box = $('#gaps');
+    try { gaps = await Api.gapList(); } catch (e) { gaps = []; } // baza jeszcze bez wolnych terminów
+    if (!box) return;
+    if (!gaps.length) { box.innerHTML = ''; return; }
+    const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
+    const askDays = [...new Set(gaps.filter((g) => g.status === 'ask').map((g) => g.day))];
+    const rest = gaps.filter((g) => g.status !== 'ask');
+    const live = rest.some((g) => g.status === 'open' || g.status === 'pending');
+    const taken = (g) => (g.taken || []).map((t) => `<span class="small" style="color:var(--text)">✓ ${esc(t.name)} · ${esc(hhmm(t.start_at))}${t.service ? ' · ' + esc(t.service) : ''} · <span class="gold">${t.bonus ? 'dodatkowa pieczątka dopisana' : '+1 pieczątka po wizycie'}</span></span>`).join('');
+    box.innerHTML = `
+      ${askDays.map((d) => { const list = gaps.filter((g) => g.status === 'ask' && g.day === d); return `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
+        <span class="eyebrow eyebrow--gold">Wolne terminy · ${esc(dateLabel(d))}</span>
+        <span class="strong gold" style="font-size:17px">${esc(list.map(range).join(', '))}</span>
+        <span class="small" style="color:var(--text-2)">Wysłać ofertę klientkom ze zgodą? Push do wszystkich z aplikacją, SMS najwyżej 2 w tygodniu na klientkę. Kto pierwsza stuknie „Biorę”, ta ma termin i dodatkową pieczątkę.</span>
+        <div class="btn-row">
+          <button class="btn btn--gold btn--sm" data-gap-send="${esc(d)}">Wyślij ofertę</button>
+          <button class="btn btn--ghost btn--sm" data-gap-skip="${esc(d)}">Nie wysyłaj</button>
+        </div>
+      </div>`; }).join('')}
+      ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
+        <summary class="eyebrow" style="cursor:pointer">Wolne terminy · ostatnie 7 dni: ${rest.length}</summary>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${rest.map((g) => `<div style="display:flex;flex-direction:column;gap:3px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
+          <span>${esc(dateLabel(g.day))}, ${esc(range(g))} <span class="tag">${g.kind === 'cancel' ? 'po odwołaniu' : 'luka w grafiku'}</span></span>
+          <span class="small">${g.info && g.kind === 'cancel' ? esc(g.info) + ' · ' : ''}${esc(GAP_STATUS[g.status] || g.status)}${g.sent_at ? ' · push: ' + (g.push_n || 0) + ', SMS: ' + (g.sms_n || 0) : ''}</span>
+          ${taken(g)}
+        </div>`).join('')}</div>
+      </details>` : ''}`;
+    box.querySelectorAll('[data-gap-send]').forEach((b) => b.addEventListener('click', () => decideGap(b.dataset.gapSend, true, b)));
+    box.querySelectorAll('[data-gap-skip]').forEach((b) => b.addEventListener('click', () => decideGap(b.dataset.gapSkip, false, b)));
+    if (location.hash === '#wolne') { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
+  }
+  async function decideGap(day, send, btn) {
+    btn.disabled = true;
+    try {
+      const r = await Api.gapDecide(day, send);
+      toast(send ? 'Oferta wysłana do ' + r.sent + ' ' + UI.plural(r.sent, 'klientki', 'klientek', 'klientek') + '.' : 'Dobrze, nie wysyłam.');
+    } catch (e) { fail(e); }
+    loadGaps();
   }
 
   // ---------- prośby o termin (klientki bez Booksy) ----------
