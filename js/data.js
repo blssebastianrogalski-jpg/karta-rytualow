@@ -142,13 +142,12 @@
         { id: 1, card_id: db.cards[0].id, service: 'Head SPA Premium', pref_day: Rules.dayPL(3), pref_part: 'midday', pref_time: null, phone: '600 100 200',
           message: 'Mogę też w sobotę rano.', status: 'new', confirmed_at: null, reply: null, handled_at: null, created_at: daysAgo(0.05) }
       ];
-      // wolne terminy (jak wolne-terminy.sql): jutro rano luka czeka na decyzję studia, po południu odwołanie wysłane klientkom
+      // wolne terminy (jak wolne-terminy.sql): jutro po południu odwołanie wysłane klientkom, zwykłe luki studio wysyła ręcznie
       const tm = Rules.dayPL(1), at = (hm) => new Date(tm + 'T' + hm + ':00').toISOString();
       db.plan.push(
         { id: 4, card_id: db.cards[3].id, day: tm, service: 'Masaż gorącą świecą', status: 'planned', start_at: at('09:00') },
         { id: 5, card_id: db.cards[1].id, day: tm, service: 'Head SPA Premium', status: 'planned', start_at: at('16:00') });
       db.gaps = [
-        { id: 1, kind: 'daily', day: tm, start_at: at('10:30'), end_at: at('13:30'), status: 'ask', info: 'zwykła luka w grafiku', push_n: null, sms_n: null, sent_at: null, created_at: daysAgo(0.1) },
         { id: 2, kind: 'cancel', day: tm, start_at: at('14:00'), end_at: at('15:30'), status: 'open', info: 'odwołała: Ewa Zielińska, Kobido UP®', push_n: 9, sms_n: 14, sent_at: daysAgo(0.02), created_at: daysAgo(0.03) }
       ];
       db.promotions = [
@@ -206,6 +205,21 @@
         while (+t + (m + 15) * 6e4 <= +new Date(g.end_at) && Slots.check(db, t, m + 15) === 'ok') m += 15;
         out.push({ at: t.toISOString(), max: m });
       }
+      return out;
+    }
+    // wolne okna dnia co 30 minut (jak gap_windows)
+    function gapWindows(db, day) {
+      const h = Slots.hours[new Date(day + 'T12:00:00').getDay() || 7], out = [];
+      if (!h) return out;
+      let cur = null;
+      for (let t = Slots.at(day, h[0]); +t + GAP_MIN * 6e4 <= +Slots.at(day, h[1]); t = new Date(+t + 18e5)) {
+        const s = gapStarts(db, { start_at: t.toISOString(), end_at: Slots.at(day, h[1]).toISOString() })[0];
+        if (s && s.at === t.toISOString()) {
+          const e = new Date(+t + s.max * 6e4).toISOString();
+          if (!cur) cur = { start_at: t.toISOString(), end_at: e }; else if (e > cur.end_at) cur.end_at = e;
+        } else if (cur) { out.push(cur); cur = null; }
+      }
+      if (cur) out.push(cur);
       return out;
     }
     // dodatkowa pieczątka po wizycie z wolnego terminu (jak wyzwalacz day_plan_gap_bonus)
@@ -481,6 +495,35 @@
         save(db);
         return { sent: n };
       }),
+      // wolne godziny na dziś i kolejne dni (jak gap_forecast w wolne-terminy-recznie.sql)
+      gapForecast: (days) => run(() => {
+        guard(); const db = load(); const out = [];
+        for (let i = 0; i <= (days || 5); i++) {
+          const day = Rules.dayPL(i), h = Slots.hours[new Date(day + 'T12:00:00').getDay() || 7];
+          const sent = (w) => (db.gaps || []).some((g) => (g.status === 'open' || g.status === 'pending') && g.day === day && g.start_at < w.end_at && w.start_at < g.end_at);
+          const who = db.cards.filter((c) => c.sms_ok && !(db.plan || []).some((p) => p.card_id === c.id && p.day === day && p.status === 'planned'));
+          const push = who.filter((c) => c.app_opened_at), sms = who.filter((c) => c.phone);
+          out.push({ day, state: h ? 'open' : 'closed', hours: h || null, visits: (db.plan || []).filter((p) => p.day === day && p.status === 'planned').length,
+            windows: h ? gapWindows(db, day).map((w) => Object.assign(w, { sent: sent(w) })) : [],
+            push_n: push.length, sms_n: sms.length, any_n: who.filter((c) => c.app_opened_at || c.phone).length });
+        }
+        return out;
+      }),
+      gapSendNow: (day, windows, channel) => run(() => {
+        guard(); const db = load();
+        if (!['push', 'sms', 'both'].includes(channel)) throw new Error('Wybierz: push, SMS albo oba.');
+        const pick = gapWindows(db, day).filter((w) => !windows || windows.some((x) => x.start_at < w.end_at && w.start_at < x.end_at))
+          .filter((w) => !(db.gaps || []).some((g) => (g.status === 'open' || g.status === 'pending') && g.day === day && g.start_at < w.end_at && w.start_at < g.end_at));
+        if (!pick.length) throw new Error('Te godziny są już zajęte albo oferta na nie już wyszła. Odśwież listę.');
+        const who = db.cards.filter((c) => c.sms_ok && !(db.plan || []).some((p) => p.card_id === c.id && p.day === day && p.status === 'planned'));
+        const push = channel !== 'sms' ? who.filter((c) => c.app_opened_at).length : 0, sms = channel !== 'push' ? who.filter((c) => c.phone).length : 0;
+        const label = { push: 'push', sms: 'SMS', both: 'push i SMS' }[channel];
+        db.gaps = db.gaps || [];
+        pick.forEach((w) => db.gaps.push({ id: Date.now() + db.gaps.length, kind: 'daily', day, start_at: w.start_at, end_at: w.end_at, status: 'open',
+          info: 'wysłane ręcznie: ' + label, push_n: push, sms_n: sms, sent_at: new Date().toISOString(), created_at: new Date().toISOString() }));
+        save(db);
+        return { sent: who.filter((c) => (channel !== 'sms' && c.app_opened_at) || (channel !== 'push' && c.phone)).length, push, sms };
+      }),
       promotionsActive: () => run(() => (load().promotions || []).filter((p) => !p.valid_until || p.valid_until >= Rules.dayPL(0))
         .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(({ id, title, body, valid_until }) => ({ id, title, body, valid_until }))),
       promotionsList: () => run(() => {
@@ -714,6 +757,8 @@
       gapTake: (token, offerId, start, service) => rpc('gap_take', { p_token: token, p_offer: offerId, p_start: start, p_service: service }),
       gapList: () => rpc('gap_list', {}),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
+      gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
+      gapSendNow: (day, windows, channel) => rpc('gap_send_now', { p_day: day, p_windows: windows || null, p_channel: channel }),
       promotionsActive: () => rpc('promotions_active', {}),
       promotionsList: () => rpc('promotions_list', {}),
       promotionAdd: ({ title, body, until, notify }) => rpc('promotion_add', { p_title: title, p_body: body || null, p_until: until || null, p_notify: !!notify }),
