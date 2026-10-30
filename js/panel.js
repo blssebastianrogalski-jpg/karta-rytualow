@@ -114,6 +114,11 @@
         <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">Moje dni wolne</span>
+        <div id="absences"><div class="spinner"></div></div>
+        <button class="btn btn--line" id="absAddBtn">+ Dodaj dzień wolny</button>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
         <label class="eyebrow" for="search">Klientki</label>
         <input class="input" id="search" type="search" placeholder="Szukaj po imieniu, nazwisku lub telefonie" value="${esc(query)}" style="background:var(--surface)">
         <div class="panel panel--tight" id="list"><div class="spinner"></div></div>
@@ -135,10 +140,11 @@
       else { e.target.value = planTarget(); UI.toast('Wybierz dzień od pojutrza do ' + PLAN_AHEAD + ' dni naprzód.'); }
       loadList();
     });
+    $('#absAddBtn').addEventListener('click', openAbsenceAdd);
     const opb = $('#ownerPushBtn');
     if (opb) opb.addEventListener('click', enableOwnerPush);
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
-    loadRefs().then(loadPlan);
+    Promise.all([loadRefs(), loadAbsences()]).then(loadPlan);
     loadList();
     loadRequests();
     loadGaps();
@@ -186,6 +192,76 @@
       toast(send ? 'Oferta wysłana do ' + r.sent + ' ' + UI.plural(r.sent, 'klientki', 'klientek', 'klientek') + '.' : 'Dobrze, nie wysyłam.');
     } catch (e) { fail(e); }
     loadGaps();
+  }
+
+  // ---------- dni wolne studia (prośby o termin i wolne terminy je omijają) ----------
+  let absences = [];
+  const absTime = (a) => a.time_from ? a.time_from + '–' + a.time_to : 'cały dzień';
+  const absDays = (a) => {
+    const short = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'long' });
+    return a.day_from === a.day_to ? short(a.day_from) : short(a.day_from) + ' – ' + short(a.day_to);
+  };
+  // „wolne” / „wolne 12:00–15:00” dla dnia planu, null = dzień pracy
+  const absenceNote = (d) => {
+    const a = absences.find((x) => x.day_from <= d && d <= x.day_to);
+    return a ? 'wolne' + (a.time_from ? ' ' + absTime(a) : '') : null;
+  };
+  const offBanner = (txt) => `<div class="panel panel--gold" style="padding:12px 16px;margin-bottom:8px"><span class="small" style="color:var(--text)">Masz ${esc(txt === 'wolne' ? 'ten dzień wolny' : txt)}. Klientki nie mogą prosić o termin w tym czasie.</span></div>`;
+  const clashText = (c) => dateLabel(c.day) + (c.start_at ? ', ' + hhmm(c.start_at) : '') + ' · ' + c.name + (c.service ? ' · ' + c.service : '') + (c.booksy ? ' (Booksy)' : '');
+  async function loadAbsences() {
+    try { absences = await Api.absenceList(); } catch (e) { absences = []; } // baza jeszcze bez dni wolnych
+    const box = $('#absences');
+    if (!box) return;
+    box.innerHTML = absences.length ? `<div class="panel panel--tight">${absences.map((a) => `<div class="list-row" style="align-items:flex-start;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+          <span class="strong">${esc(absDays(a))}</span>
+          <span class="small">${esc(absTime(a))}${a.note ? ' · ' + esc(a.note) : ''}</span>
+          ${(a.clashes || []).length ? `<span class="small gold" style="white-space:normal">W planie ${a.clashes.length === 1 ? 'jest wizyta' : 'są wizyty'} w tym czasie:</span>${a.clashes.map((c) => `<span class="small gold" style="white-space:normal">${esc(clashText(c))}</span>`).join('')}` : ''}
+        </div>
+        <button class="btn btn--ghost btn--sm" data-abs-del="${a.id}" style="flex:0 0 auto;width:auto">Usuń</button>
+      </div>`).join('')}</div>` : '<p class="small" style="margin:0">Nie masz zaplanowanych dni wolnych. Dodaj urlop albo wolne godziny, a aplikacja nie przyjmie na nie próśb o termin i nie zaproponuje ich klientkom.</p>';
+    box.querySelectorAll('[data-abs-del]').forEach((b) => b.addEventListener('click', async () => {
+      const a = absences.find((x) => String(x.id) === b.dataset.absDel);
+      if (!(await UI.ask('Usunąć dzień wolny: ' + absDays(a) + ' (' + absTime(a) + ')? Klientki znów będą mogły prosić o termin w tym czasie.', 'Usuń'))) return;
+      try { await Api.absenceDelete(a.id); toast('Dzień wolny usunięty.'); await loadAbsences(); loadPlan(); } catch (e) { fail(e); }
+    }));
+  }
+  function openAbsenceAdd() {
+    openSheet(`${bar('Dzień wolny')}
+      <p class="lead" style="margin-top:-8px">W tym czasie klientka nie wyśle prośby o termin (zobaczy, że studio jest nieczynne, i najbliższe wolne dni), a oferty wolnych terminów go ominą.</p>
+      <form class="panel" id="absForm" novalidate>
+        <div class="split" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+          <div class="field"><label for="absFrom">Od</label><input class="input" id="absFrom" style="min-width:0;width:100%" type="date" min="${Rules.dayPL(0)}" value="${Rules.dayPL(1)}"></div>
+          <div class="field"><label for="absTo">Do (włącznie)</label><input class="input" id="absTo" style="min-width:0;width:100%" type="date" min="${Rules.dayPL(0)}" value="${Rules.dayPL(1)}"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="absPart"> <span>Tylko kilka godzin (jeden dzień)</span></label>
+        <div class="split" id="absHours" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)" hidden>
+          <div class="field"><label for="absTf">Od godziny</label><input class="input" id="absTf" style="min-width:0;width:100%" type="time" step="900" value="12:00"></div>
+          <div class="field"><label for="absTt">Do godziny</label><input class="input" id="absTt" style="min-width:0;width:100%" type="time" step="900" value="15:00"></div>
+        </div>
+        <div class="field"><label for="absNote">Notatka (widzisz tylko Ty)</label><input class="input" id="absNote" maxlength="80" placeholder="np. urlop, szkolenie, lekarz" autocomplete="off"></div>
+        <p class="small" style="margin:0">Klientki nie widzą powodu, tylko to, że studio jest nieczynne. <b>Zablokuj ten czas także w Booksy</b>, bo tam aplikacja nie sięga.</p>
+        <p class="error" id="absErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="absSave">Zapisz dzień wolny</button>
+      </form>`);
+    const from = $('#absFrom'), to = $('#absTo'), partBox = $('#absPart');
+    from.addEventListener('change', () => { if (!to.value || to.value < from.value || partBox.checked) to.value = from.value; });
+    partBox.addEventListener('change', () => { $('#absHours').hidden = !partBox.checked; to.disabled = partBox.checked; if (partBox.checked) to.value = from.value; });
+    $('#absForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const part = partBox.checked, btn = $('#absSave');
+      btn.disabled = true;
+      try {
+        const r = await Api.absenceAdd({ from: from.value, to: part ? from.value : to.value, timeFrom: part ? $('#absTf').value : null, timeTo: part ? $('#absTt').value : null, note: $('#absNote').value });
+        await loadAbsences();
+        if (!r.clashes || !r.clashes.length) { toast('Dzień wolny zapisany.'); closeSheet(); return; }
+        openSheet(`${bar('Wizyty w czasie wolnego')}
+          <p class="lead" style="margin-top:-8px">Dzień wolny zapisany. W planie ${r.clashes.length === 1 ? 'jest wizyta' : 'są wizyty'} w tym czasie. ${r.clashes.length === 1 ? 'Przełóż ją albo odwołaj, bo aplikacja jej nie rusza sama.' : 'Przełóż je albo odwołaj, bo aplikacja ich nie rusza sama.'}</p>
+          <div class="panel panel--tight">${r.clashes.map((c) => `<div class="list-row"><span style="white-space:normal;min-width:0">${esc(clashText(c))}</span></div>`).join('')}</div>
+          <p class="small">Wizyty z Booksy zmienisz w Booksy. Pozostałe usuniesz z planu krzyżykiem „×” i umówisz z klientką nowy termin.</p>
+          <button class="btn btn--gold" data-close>Rozumiem</button>`);
+      } catch (ex) { const el = $('#absErr'); el.textContent = ex.message; el.hidden = false; btn.disabled = false; }
+    });
   }
 
   // ---------- prośby o termin (klientki bez Booksy) ----------
@@ -347,6 +423,7 @@
     const day = planDay;
     try { plan = day < 2 ? await Api.planList(Rules.dayPL(day)) : await Api.planRange(Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
+    if (!plan.length && day < 2 && absenceNote(Rules.dayPL(day))) { box.innerHTML = offBanner(absenceNote(Rules.dayPL(day))); return; }
     if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">' + (day < 2 ? 'Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.' : 'Na kolejne ' + PLAN_AHEAD + ' dni nie ma jeszcze żadnych wizyt.') + '</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
     const hhmm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
@@ -368,13 +445,15 @@
       </div>`;
     };
     if (day < 2) {
-      box.innerHTML = '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
+      const off = absenceNote(Rules.dayPL(day));
+      box.innerHTML = (off ? offBanner(off) : '') + '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
     } else {
       // kolejne dni: wizyty pogrupowane według dnia
       const days = [...new Set(plan.map((p) => p.day))];
       box.innerHTML = '<div style="display:flex;flex-direction:column;gap:12px">' + days.map((d) => {
         const list = plan.filter((p) => p.day === d);
-        return `<div style="display:flex;flex-direction:column;gap:6px"><span class="small">${esc(dateLabel(d).replace(/^./, (ch) => ch.toUpperCase()))} · ${list.length} ${list.length === 1 ? 'wizyta' : list.length < 5 ? 'wizyty' : 'wizyt'}</span><div class="panel panel--tight">${list.map(row).join('')}</div></div>`;
+        const off = absenceNote(d);
+        return `<div style="display:flex;flex-direction:column;gap:6px"><span class="small">${esc(dateLabel(d).replace(/^./, (ch) => ch.toUpperCase()))} · ${list.length} ${list.length === 1 ? 'wizyta' : list.length < 5 ? 'wizyty' : 'wizyt'}${off ? ' <span class="tag">' + esc(off) + '</span>' : ''}</span><div class="panel panel--tight">${list.map(row).join('')}</div></div>`;
       }).join('') + '</div>';
     }
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));

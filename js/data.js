@@ -69,9 +69,21 @@
     ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
     hm(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); },
     at(day, hm) { return new Date(day + 'T' + hm + ':00'); },
+    // nieobecność studia nachodząca na [start, end) (jak absence_hit w dni-wolne.sql)
+    absence(db, start, end) {
+      const a = (db.absences || []).find((x) => {
+        const from = Slots.at(x.day_from, x.time_from || '00:00');
+        const to = x.time_to ? Slots.at(x.day_to, x.time_to) : new Date(+Slots.at(x.day_to, '00:00') + 864e5);
+        return start < to && from < end;
+      });
+      return a ? 'Masz wtedy wolne' + (a.time_from ? ' (' + a.time_from + '–' + a.time_to + ')' : '') : null;
+    },
+    fullDay(db, day) { return (db.absences || []).some((x) => !x.time_from && x.day_from <= day && day <= x.day_to); },
     check(db, start, min) {
       const day = Slots.ymd(start), h = Slots.hours[start.getDay() || 7];
       if (!h) return 'Studio nieczynne tego dnia';
+      const off = Slots.absence(db, start, new Date(+start + min * 6e4));
+      if (off) return off;
       if (start < Date.now() + 2 * 36e5) return 'Za krótko przed wizytą';
       const end = new Date(+start + min * 6e4);
       if (start < Slots.at(day, h[0]) || end > Slots.at(day, h[1])) return 'Poza godzinami pracy (' + h[0] + '–' + h[1] + ')';
@@ -207,6 +219,12 @@
         out.push({ at: t.toISOString(), max: m });
       }
       return out;
+    }
+    // wizyty z planu w czasie nieobecności (jak absence_clashes)
+    function absenceClashes(db, a) {
+      return (db.plan || []).filter((p) => p.status === 'planned' && p.day >= a.day_from && p.day <= a.day_to &&
+        (!a.time_from || !p.start_at || Slots.absence({ absences: [a] }, new Date(p.start_at), new Date(+new Date(p.start_at) + 6e4))))
+        .map((p) => { const c = db.cards.find((x) => x.id === p.card_id) || {}; return { day: p.day, start_at: p.start_at || null, service: p.service, name: c.name || p.guest_name || 'Klientka', booksy: !!p.booking_id }; });
     }
     // dodatkowa pieczątka po wizycie z wolnego terminu (jak wyzwalacz day_plan_gap_bonus)
     function gapBonus(db, c, p) {
@@ -392,6 +410,7 @@
           db.requests.filter((x) => x.move_of === moveOf && ['new', 'suggested'].includes(x.status)).forEach((x) => { x.status = 'cancelled'; x.handled_at = new Date().toISOString(); });
         }
         if (db.requests.filter((r) => r.card_id === c.id && ['new', 'suggested'].includes(r.status)).length >= 3) throw new Error('Masz już 3 prośby czekające na odpowiedź. Odezwę się wkrótce.');
+        if (Slots.fullDay(db, f.day)) throw new Error('W tym dniu studio jest nieczynne. Wybierz proszę inny dzień.');
         const conflict = Slots.conflict(db, f.day, f.part || 'any', f.time || null, f.service || null);
         let status = 'new', suggestions = null;
         if (conflict && attempt === 1) {
@@ -533,6 +552,34 @@
         if (!r) throw new Error('Ta prośba jest już załatwiona.');
         Object.assign(r, { status: 'declined', reply: (reply || '').trim() || null, suggestions: null, handled_at: new Date().toISOString() }); save(db);
       }),
+      // dni wolne studia (jak dni-wolne.sql)
+      closedDays: (token) => run(() => {
+        const db = load(); if (!db.cards.some((x) => x.token === token)) return null;
+        const days = [];
+        for (let i = 0; i <= 60; i++) { const d = Rules.dayPL(i); if (Slots.fullDay(db, d)) days.push(d); }
+        return { weekdays: [1, 2, 3, 4, 5, 6, 7].filter((i) => !Slots.hours[i]), days };
+      }),
+      absenceList: () => run(() => {
+        guard(); const db = load();
+        return (db.absences || []).filter((a) => a.day_to >= Rules.dayPL(0)).sort((a, b) => a.day_from.localeCompare(b.day_from))
+          .map((a) => Object.assign({}, a, { clashes: absenceClashes(db, a) }));
+      }),
+      absenceAdd: (f) => run(() => {
+        guard(); const db = load();
+        const a = { id: Date.now(), day_from: f.from, day_to: f.to || f.from, time_from: f.timeFrom || null, time_to: f.timeTo || null, note: (f.note || '').trim() || null };
+        if (!a.day_from) throw new Error('Wybierz dzień.');
+        if (a.day_from < Rules.dayPL(0)) throw new Error('Wybierz dzień od dziś.');
+        if (a.day_to < a.day_from) throw new Error('Dzień „do” jest przed dniem „od”.');
+        if (!a.time_from !== !a.time_to) throw new Error('Podaj obie godziny albo żadnej (cały dzień).');
+        if (a.time_from && a.day_to !== a.day_from) throw new Error('Godziny można podać tylko dla jednego dnia.');
+        if (a.time_from && a.time_from >= a.time_to) throw new Error('Godzina „do” musi być po godzinie „od”.');
+        db.absences = (db.absences || []).concat(a);
+        (db.gaps || []).filter((g) => ['pending', 'ask', 'open'].includes(g.status) && Slots.absence({ absences: [a] }, new Date(g.start_at), new Date(Math.max(+new Date(g.end_at), +new Date(g.start_at) + 6e4))))
+          .forEach((g) => { g.status = g.status === 'open' ? 'closed' : 'skipped'; g.info = (g.info ? g.info + ' · ' : '') + 'dzień wolny'; });
+        save(db);
+        return { id: a.id, clashes: absenceClashes(db, a) };
+      }),
+      absenceDelete: (id) => run(() => { guard(); const db = load(); db.absences = (db.absences || []).filter((a) => a.id !== id); save(db); }),
       slotConflict: (day, time, service) => run(() => {
         guard(); const res = Slots.check(load(), new Date(day + 'T' + time), Slots.minutes(service || null));
         return res === 'ok' || res === 'Za krótko przed wizytą' ? null : res;
@@ -708,6 +755,10 @@
       visitCancel: (token, planId) => rpc('visit_cancel', { p_token: token, p_plan_id: planId }),
       requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
       slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
+      closedDays: (token) => rpc('closed_days', { p_token: token }),
+      absenceList: () => rpc('absence_list', {}),
+      absenceAdd: (f) => rpc('absence_add', { p_from: f.from, p_to: f.to || null, p_time_from: f.timeFrom || null, p_time_to: f.timeTo || null, p_note: f.note || null }),
+      absenceDelete: (id) => rpc('absence_delete', { p_id: id }),
       myRequests: (token) => rpc('my_requests', { p_token: token }),
       requestCancel: (token, id) => rpc('request_cancel', { p_token: token, p_id: id }),
       myGapOffers: (token) => rpc('my_gap_offers', { p_token: token }),

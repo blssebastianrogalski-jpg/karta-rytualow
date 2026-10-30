@@ -611,7 +611,8 @@
       <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
-        <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}"></div>
+        <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}">
+          <div id="rClosed" role="status" hidden style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div></div>
         <div class="field"><span class="label" id="rPartL">Pora dnia</span>
           <div class="chips" role="radiogroup" aria-labelledby="rPartL" id="rParts" style="flex-wrap:wrap">${parts.map((k) => `<button type="button" class="pick" role="radio" data-part="${k}" aria-checked="${k === 'any'}" style="min-height:44px;padding:8px 12px;flex:1 1 45%">${esc(PART[k].replace(/^./, (ch) => ch.toUpperCase()))}</button>`).join('')}</div>
         </div>
@@ -629,11 +630,39 @@
       part = b.dataset.part;
       $('#rParts').querySelectorAll('[data-part]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
     });
+    // dni wolne studia: takiego dnia nie da się wybrać, klientka widzi najbliższe dni otwarte
+    let closed = null;
+    const isClosed = (d) => !!closed && (closed.days.includes(d) || closed.weekdays.includes(new Date(d + 'T12:00:00').getDay() || 7));
+    const openDays = (from, n) => {
+      const out = [];
+      for (let i = 0; i <= 60 && out.length < n; i++) { const d = Rules.dayPL(i); if (d > from && !isClosed(d)) out.push(d); }
+      return out;
+    };
+    const shortDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'long' });
+    const checkDay = () => {
+      const box = $('#rClosed'); if (!box) return;
+      const d = $('#rDay').value, off = d && isClosed(d);
+      $('#rBtn').disabled = !!off;
+      box.hidden = !off;
+      if (!off) { box.innerHTML = ''; return; }
+      const next = openDays(d, 3);
+      box.innerHTML = `<span class="small" style="color:var(--text)">W tym dniu studio jest nieczynne.${next.length ? ' Najbliższe wolne dni:' : ' Zadzwoń, proszę, ustalimy termin.'}</span>
+        ${next.length ? `<div class="chips" style="flex-wrap:wrap">${next.map((x) => `<button type="button" class="pick" data-day="${x}" style="min-height:44px;padding:8px 12px;flex:1 1 30%;justify-content:center">${esc(shortDay(x))}</button>`).join('')}</div>` : ''}`;
+      box.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => { $('#rDay').value = b.dataset.day; checkDay(); }));
+    };
+    $('#rDay').addEventListener('change', checkDay);
+    Api.closedDays(CardStore.get()).then((c) => {
+      if (!c || !$('#rDay')) return;
+      closed = c;
+      if (isClosed($('#rDay').value)) { const n = openDays(Rules.dayPL(0), 1)[0]; if (n) $('#rDay').value = n; }
+      checkDay();
+    }).catch(() => { /* baza jeszcze bez dni wolnych: sprawdzi studio */ });
     $('#reqForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = $('#rErr');
       const f = { service: $('#rService').value, day: $('#rDay').value, part, time: $('#rTime').value, phone: $('#rPhone').value.trim(), message: $('#rMsg').value, retryOf, moveOf };
       if (!f.day) { err.textContent = 'Wybierz dzień.'; err.hidden = false; return; }
+      if (isClosed(f.day)) { checkDay(); return; }
       if (f.phone.replace(/\D/g, '').length < 9) { err.textContent = 'Podaj numer telefonu, żebym mogła oddzwonić.'; err.hidden = false; return; }
       const btn = $('#rBtn'); btn.disabled = true; btn.textContent = 'Wysyłam…';
       try {
