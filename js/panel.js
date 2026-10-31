@@ -150,48 +150,98 @@
     loadGaps();
   }
 
-  // ---------- wolne terminy (po odwołaniu wysyłają się same, zwykłe luki po decyzji studia) ----------
+  // ---------- wolne terminy (po odwołaniu wysyłają się same, zwykłe luki tylko ręcznie z „Wolne godziny”) ----------
   const GAP_STATUS = { pending: 'wyślę za kilka minut', open: 'wysłana, czeka na chętną', closed: 'zajęta albo minęła', skipped: 'nie wysłana' };
-  let gaps = [];
+  const GAP_DAYS = 5;      // dziś + tyle dni naprzód
+  const CHANNEL = { both: 'Push i SMS', push: 'Tylko push', sms: 'Tylko SMS' };
+  let gaps = [], forecast = null, gapChannel = 'both';
+  const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
+  const bigDay = (d) => d === Rules.dayPL(0) ? 'Dziś' : d === Rules.dayPL(1) ? 'Jutro' : dateLabel(d).replace(/^./, (ch) => ch.toUpperCase());
   async function loadGaps() {
     const box = $('#gaps');
     try { gaps = await Api.gapList(); } catch (e) { gaps = []; } // baza jeszcze bez wolnych terminów
+    try { forecast = await Api.gapForecast(GAP_DAYS); } catch (e) { forecast = null; } // baza jeszcze bez wolne-terminy-recznie.sql
     if (!box) return;
-    if (!gaps.length) { box.innerHTML = ''; return; }
-    const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
-    const askDays = [...new Set(gaps.filter((g) => g.status === 'ask').map((g) => g.day))];
     const rest = gaps.filter((g) => g.status !== 'ask');
     const live = rest.some((g) => g.status === 'open' || g.status === 'pending');
     const taken = (g) => (g.taken || []).map((t) => `<span class="small" style="color:var(--text)">✓ ${esc(t.name)} · ${esc(hhmm(t.start_at))}${t.service ? ' · ' + esc(t.service) : ''} · <span class="gold">${t.bonus ? 'dodatkowa pieczątka dopisana' : '+1 pieczątka po wizycie'}</span></span>`).join('');
+    const dayRow = (f, i) => {
+      const free = f.windows.filter((w) => !w.sent), sent = f.windows.filter((w) => w.sent);
+      const why = f.state === 'closed' ? 'nieczynne' : f.state === 'off' ? 'dzień wolny' : f.state === 'unknown' ? 'godziny pracy nieustawione' : !f.windows.length ? 'brak wolnych godzin' : '';
+      return `<div style="display:flex;flex-direction:column;gap:6px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
+        <div class="row" style="align-items:baseline;gap:8px"><span class="strong">${esc(bigDay(f.day))}</span><span class="small">${f.state === 'open' && f.hours ? esc(f.hours[0] + '–' + f.hours[1]) + ' · ' + f.visits + ' ' + UI.plural(f.visits, 'wizyta', 'wizyty', 'wizyt') : ''}</span></div>
+        ${why ? `<span class="small">${esc(why)}</span>` : ''}
+        ${free.length ? `<span class="gold" style="font-size:16px">${esc(free.map(range).join(', '))}</span>` : ''}
+        ${sent.length ? `<span class="small">Oferta już wyszła: ${esc(sent.map(range).join(', '))}</span>` : ''}
+        ${free.length ? `<button class="btn btn--line btn--sm" data-gap-day="${esc(f.day)}" style="align-self:flex-start">Wyślij ofertę klientkom</button>` : ''}
+      </div>`;
+    };
     box.innerHTML = `
-      ${askDays.map((d) => { const list = gaps.filter((g) => g.status === 'ask' && g.day === d); return `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
-        <span class="eyebrow eyebrow--gold">Wolne terminy · ${esc(dateLabel(d))}</span>
-        <span class="strong gold" style="font-size:17px">${esc(list.map(range).join(', '))}</span>
-        <span class="small" style="color:var(--text-2)">Wysłać ofertę klientkom ze zgodą? Push do wszystkich z aplikacją, SMS najwyżej 2 w tygodniu na klientkę. Kto pierwsza stuknie „Biorę”, ta ma termin i dodatkową pieczątkę.</span>
-        <div class="btn-row">
-          <button class="btn btn--gold btn--sm" data-gap-send="${esc(d)}">Wyślij ofertę</button>
-          <button class="btn btn--ghost btn--sm" data-gap-skip="${esc(d)}">Nie wysyłaj</button>
-        </div>
-      </div>`; }).join('')}
+      ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' open' : ''}>
+        <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni</summary>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
+        <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, jak dotąd.</p>
+      </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
-        <summary class="eyebrow" style="cursor:pointer">Wolne terminy · ostatnie 7 dni: ${rest.length}</summary>
+        <summary class="eyebrow" style="cursor:pointer">Wysłane oferty · ostatnie 7 dni: ${rest.length}</summary>
         <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${rest.map((g) => `<div style="display:flex;flex-direction:column;gap:3px;padding:10px 0;border-bottom:1px solid var(--line-soft)">
-          <span>${esc(dateLabel(g.day))}, ${esc(range(g))} <span class="tag">${g.kind === 'cancel' ? 'po odwołaniu' : 'luka w grafiku'}</span></span>
-          <span class="small">${g.info && g.kind === 'cancel' ? esc(g.info) + ' · ' : ''}${esc(GAP_STATUS[g.status] || g.status)}${g.sent_at ? ' · push: ' + (g.push_n || 0) + ', SMS: ' + (g.sms_n || 0) : ''}</span>
+          <span>${esc(dateLabel(g.day))}, ${esc(range(g))} <span class="tag">${g.kind === 'cancel' ? 'po odwołaniu' : 'wolne godziny'}</span></span>
+          <span class="small">${g.info && (g.kind === 'cancel' || /ręcznie/.test(g.info)) ? esc(g.info) + ' · ' : ''}${esc(GAP_STATUS[g.status] || g.status)}${g.sent_at ? ' · push: ' + (g.push_n || 0) + ', SMS: ' + (g.sms_n || 0) : ''}</span>
           ${taken(g)}
         </div>`).join('')}</div>
       </details>` : ''}`;
-    box.querySelectorAll('[data-gap-send]').forEach((b) => b.addEventListener('click', () => decideGap(b.dataset.gapSend, true, b)));
-    box.querySelectorAll('[data-gap-skip]').forEach((b) => b.addEventListener('click', () => decideGap(b.dataset.gapSkip, false, b)));
+    box.querySelectorAll('[data-gap-day]').forEach((b) => b.addEventListener('click', () => openGapSend(forecast.find((f) => f.day === b.dataset.gapDay))));
     if (location.hash === '#wolne') { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
   }
-  async function decideGap(day, send, btn) {
-    btn.disabled = true;
-    try {
-      const r = await Api.gapDecide(day, send);
-      toast(send ? 'Oferta wysłana do ' + r.sent + ' ' + UI.plural(r.sent, 'klientki', 'klientek', 'klientek') + '.' : 'Dobrze, nie wysyłam.');
-    } catch (e) { fail(e); }
-    loadGaps();
+
+  // wysyłka oferty na wybrany dzień: które godziny i jak (push, SMS, oba)
+  function openGapSend(f) {
+    if (!f) return;
+    const free = f.windows.filter((w) => !w.sent);
+    const picked = new Set(free.map((w, i) => i));
+    const count = () => gapChannel === 'push' ? f.push_n : gapChannel === 'sms' ? f.sms_n : f.any_n;
+    openSheet(`${bar('Wyślij wolny termin')}
+      <p class="lead" style="margin-top:-8px">${esc(bigDay(f.day))}. Zaznacz godziny, które chcesz zaproponować.</p>
+      <div class="picks" id="gsWins">${free.map((w, i) => `<button type="button" class="pick" role="checkbox" aria-checked="true" data-w="${i}">
+        <span><span class="pick__name">${esc(range(w))}</span><span class="pick__meta">${esc(gapLen(w))}</span></span><span class="pick__price" aria-hidden="true">✓</span></button>`).join('')}</div>
+      <span class="eyebrow" style="margin-top:6px">Jak wysłać</span>
+      <div class="tabs tabs--small tabs--three" role="radiogroup" aria-label="Jak wysłać">${Object.keys(CHANNEL).map((k) => `<button role="radio" data-ch="${k}" aria-selected="${k === gapChannel}">${esc(CHANNEL[k])}</button>`).join('')}</div>
+      <p class="small" id="gsInfo" style="margin:0"></p>
+      <p class="error" id="gsErr" role="alert" hidden></p>
+      <button class="btn btn--gold" id="gsSend">Wyślij</button>`);
+    const upd = () => {
+      const n = count();
+      $('#gsInfo').innerHTML = `Push: ${f.push_n} ${UI.plural(f.push_n, 'klientka', 'klientki', 'klientek')} z aplikacją. SMS: ${f.sms_n} ${UI.plural(f.sms_n, 'klientka', 'klientki', 'klientek')} (najwyżej 2 SMS-y w tygodniu na klientkę). Tylko klientki ze zgodą na powiadomienia i bez wizyty tego dnia. Kto pierwsza stuknie „Biorę”, ta ma termin i dodatkową pieczątkę.`;
+      const b = $('#gsSend');
+      b.textContent = picked.size ? 'Wyślij do ' + n + ' ' + UI.plural(n, 'klientki', 'klientek', 'klientek') : 'Zaznacz godzinę';
+      b.disabled = !picked.size || !n;
+    };
+    sheetIn.querySelectorAll('[data-w]').forEach((b) => b.addEventListener('click', () => {
+      const i = +b.dataset.w;
+      if (picked.has(i)) picked.delete(i); else picked.add(i);
+      b.setAttribute('aria-checked', String(picked.has(i)));
+      b.querySelector('.pick__price').textContent = picked.has(i) ? '✓' : '';
+      upd();
+    }));
+    sheetIn.querySelectorAll('[data-ch]').forEach((b) => b.addEventListener('click', () => {
+      gapChannel = b.dataset.ch;
+      sheetIn.querySelectorAll('[data-ch]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+      upd();
+    }));
+    $('#gsSend').addEventListener('click', async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      try {
+        const r = await Api.gapSendNow(f.day, free.filter((w, i) => picked.has(i)).map((w) => ({ start_at: w.start_at, end_at: w.end_at })), gapChannel);
+        toast('Oferta wysłana do ' + r.sent + ' ' + UI.plural(r.sent, 'klientki', 'klientek', 'klientek') + ' (push: ' + r.push + ', SMS: ' + r.sms + ').');
+        closeSheet(); loadGaps();
+      } catch (ex) { const el = $('#gsErr'); el.textContent = ex.message; el.hidden = false; btn.disabled = false; }
+    });
+    upd();
+  }
+  // „do 3 h” – ile czasu jest w oknie
+  function gapLen(w) {
+    const m = Math.round((new Date(w.end_at) - new Date(w.start_at)) / 6e4);
+    return m >= 60 ? (m % 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m / 60 + ' h') + ' wolnego' : m + ' min wolnego';
   }
 
   // ---------- dni wolne studia (prośby o termin i wolne terminy je omijają) ----------
