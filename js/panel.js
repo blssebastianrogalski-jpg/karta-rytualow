@@ -845,7 +845,7 @@
   // ---------- paragon za rytuał ----------
   // Okno „Wystaw paragon”: rytuał, kwota, płatność i dane klientki. Sklep (fragment paragon-za-rytual.php)
   // tworzy opłacone zamówienie, a wtyczka eparagony.pl drukuje paragon i wysyła e-paragon na e-mail.
-  const RC_PAY = [['gotowka', 'Gotówka'], ['blik_telefon', 'BLIK na telefon']];
+  const RC_PAY = [['gotowka', 'Gotówka'], ['blik_telefon', 'BLIK na telefon'], ['karta', 'Karta']];
   const RC_OFF = [[0, 'cena'], [15, '−15%'], [20, '−20%'], [30, '−30%']];
   let rituals = null;
   let rc = null;
@@ -871,7 +871,7 @@
         </section>
         <section style="display:flex;flex-direction:column;gap:10px">
           <span class="eyebrow">3 · Płatność</span>
-          <div class="pay pay--two" role="radiogroup" aria-label="Sposób płatności">${RC_PAY.map(([k, l]) => `<button type="button" role="radio" data-rcpay="${k}" aria-checked="false">${l}</button>`).join('')}</div>
+          <div class="pay" role="radiogroup" aria-label="Sposób płatności">${RC_PAY.map(([k, l]) => `<button type="button" role="radio" data-rcpay="${k}" aria-checked="false">${l}</button>`).join('')}</div>
           <div class="panel panel--tight" id="rcPayInfo" hidden></div>
         </section>
         <section style="display:flex;flex-direction:column;gap:10px">

@@ -202,6 +202,7 @@ function tctd_paragon_issue( WP_REST_Request $req ) {
 	$payments = array(
 		'gotowka'      => array( 'tctd_gotowka', 'Gotówka' ),
 		'blik_telefon' => array( 'tctd_blik_telefon', 'BLIK na telefon' ),
+		'karta'        => array( 'tctd_karta', 'Karta płatnicza' ),
 	);
 
 	if ( ! preg_match( '/^[0-9a-f-]{36}$/', $ref ) ) {
