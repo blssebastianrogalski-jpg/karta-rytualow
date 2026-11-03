@@ -95,6 +95,8 @@
       return renderJoin('Nie znalazłam tej karty. Załóż nową albo poproś w studiu o link do swojej karty.');
     }
     if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
+    // zgoda już jest, a subskrypcja mogła zniknąć (wylogowanie, ponowna instalacja), więc odnawiam ją po cichu
+    if (pushSupported() && Notification.permission === 'granted') subscribePush(true);
     if (linkToken) toast('Witaj, ' + firstName() + '! Twoja karta jest już w aplikacji.');
     await Promise.all([loadRequests(), loadGaps()]);
     loadPromos();
