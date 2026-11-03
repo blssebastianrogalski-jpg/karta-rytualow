@@ -93,6 +93,7 @@
     main.innerHTML = `
       ${tabsHtml()}
       <h1>Panel studia</h1>
+      <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="gaps"></div>
@@ -126,6 +127,7 @@
       <button class="btn btn--ghost" id="integrBtn">Integracje: Booksy i Kalendarz Google</button>`;
     bindTabs();
     $('#newBtn').addEventListener('click', () => openNewCard());
+    $('#receiptBtn').addEventListener('click', () => openReceipt());
     $('#integrBtn').addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); });
     document.querySelectorAll('[data-plan-day]').forEach((b) => b.addEventListener('click', () => {
       planDay = +b.dataset.planDay;
@@ -839,6 +841,231 @@
     const p = pending.get();
     if (document.visibilityState === 'visible' && tab === 'sale' && p && $('#rStatus')) pollReceipt(p.order_id, true);
   });
+
+  // ---------- paragon za rytuał ----------
+  // Okno „Wystaw paragon”: rytuał, kwota, płatność i dane klientki. Sklep (fragment paragon-za-rytual.php)
+  // tworzy opłacone zamówienie, a wtyczka eparagony.pl drukuje paragon i wysyła e-paragon na e-mail.
+  const RC_PAY = [['gotowka', 'Gotówka'], ['blik_telefon', 'BLIK na telefon']];
+  const RC_OFF = [[0, 'cena'], [15, '−15%'], [20, '−20%'], [30, '−30%']];
+  let rituals = null;
+  let rc = null;
+  let rcPoll = 0;
+  const newRc = () => ({ productId: null, off: 0, amount: '', payment: null, transferOk: false, name: '', email: '', phone: '' });
+  const toAmount = (v) => { const n = Number(String(v).replace(',', '.').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const rcRitual = () => (rituals || []).find((r) => r.id === rc.productId) || null;
+
+  function openReceipt() {
+    rc = newRc();
+    openSheet(bar('Wystaw paragon') + `
+      <div id="rcResult"></div>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <span class="eyebrow">1 · Rytuał</span>
+        <div id="rcList"><div class="spinner"></div></div>
+      </section>
+      <section id="rcRest" style="display:flex;flex-direction:column;gap:16px" hidden>
+        <section style="display:flex;flex-direction:column;gap:10px">
+          <span class="eyebrow">2 · Kwota</span>
+          <div class="pay pay--four" role="radiogroup" aria-label="Rabat">${RC_OFF.map(([v, l]) => `<button type="button" role="radio" data-off="${v}" aria-checked="false">${l}</button>`).join('')}</div>
+          <div class="field"><label for="rcAmount">Do zapłaty (zł)</label><input class="input" id="rcAmount" inputmode="decimal" autocomplete="off"></div>
+          <p class="small" id="rcOffInfo" style="margin:0"></p>
+        </section>
+        <section style="display:flex;flex-direction:column;gap:10px">
+          <span class="eyebrow">3 · Płatność</span>
+          <div class="pay pay--two" role="radiogroup" aria-label="Sposób płatności">${RC_PAY.map(([k, l]) => `<button type="button" role="radio" data-rcpay="${k}" aria-checked="false">${l}</button>`).join('')}</div>
+          <div class="panel panel--tight" id="rcPayInfo" hidden></div>
+        </section>
+        <section style="display:flex;flex-direction:column;gap:10px">
+          <span class="eyebrow">4 · Klientka</span>
+          <div class="panel" style="gap:12px">
+            <div class="field"><label for="rcName">Imię i nazwisko</label><input class="input" id="rcName" autocomplete="off" placeholder="np. Anna Kowalska"></div>
+            <div id="rcHints"></div>
+            <div class="field"><label for="rcEmail">E-mail (na niego przyjdzie e-paragon)</label><input class="input" id="rcEmail" type="email" inputmode="email" autocomplete="off"></div>
+            <div class="field"><label for="rcPhone">Telefon (nieobowiązkowy)</label><input class="input" id="rcPhone" type="tel" autocomplete="off"></div>
+          </div>
+        </section>
+        <section class="panel panel--gold" style="gap:12px">
+          <div class="row"><span class="eyebrow eyebrow--gold">Do zapłaty</span><span class="strong gold" id="rcTotal" style="font-size:22px">—</span></div>
+          <p class="error" id="rcErr" role="alert" hidden></p>
+          <button class="btn btn--gold" id="rcIssue" style="min-height:58px">Wystaw paragon</button>
+        </section>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <div class="row"><span class="eyebrow">Ostatnie paragony za rytuały</span><button class="linkbtn" id="rcReload" style="min-height:0;padding:0">Odśwież</button></div>
+        <div class="panel panel--tight" id="rcHistory"><div class="spinner"></div></div>
+      </section>`);
+    sheetIn.querySelectorAll('[data-off]').forEach((b) => b.addEventListener('click', () => { rc.off = +b.dataset.off; setRcAmount(); }));
+    sheetIn.querySelectorAll('[data-rcpay]').forEach((b) => b.addEventListener('click', () => { if (rc.payment !== b.dataset.rcpay) rc.transferOk = false; rc.payment = b.dataset.rcpay; updateRc(); }));
+    $('#rcAmount').addEventListener('input', (e) => { rc.amount = e.target.value; rc.off = null; updateRc(); });
+    [['#rcName', 'name'], ['#rcEmail', 'email'], ['#rcPhone', 'phone']].forEach(([sel, key]) => $(sel).addEventListener('input', (e) => { rc[key] = e.target.value; }));
+    bindRcHints();
+    $('#rcIssue').addEventListener('click', issueRc);
+    $('#rcReload').addEventListener('click', () => loadRcHistory());
+    loadRituals();
+    loadRcHistory();
+  }
+
+  async function loadRituals() {
+    const box = $('#rcList');
+    if (!box) return;
+    if (!rituals) {
+      try { rituals = await Api.ritualsList(); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
+    }
+    if (!box.isConnected) return;
+    if (!rituals.length) { box.innerHTML = '<p class="small">Sklep nie zwrócił żadnego rytuału.</p>'; return; }
+    box.innerHTML = '<div class="picks" role="radiogroup" aria-label="Rytuał">' + rituals.map((r) => `
+      <button type="button" class="pick" role="radio" data-rc="${r.id}" aria-checked="false">
+        <span class="pick__name">${esc(r.name)}</span><span class="pick__price">${zl(r.price)}</span>
+      </button>`).join('') + '</div>';
+    box.querySelectorAll('[data-rc]').forEach((b) => b.addEventListener('click', () => {
+      const first = !rc.productId;
+      rc.productId = +b.dataset.rc;
+      rc.off = rc.off == null ? 0 : rc.off;
+      setRcAmount();
+      if (first) { $('#rcRest').hidden = false; $('#rcRest').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    }));
+  }
+
+  function setRcAmount() {
+    const r = rcRitual();
+    if (r && rc.off != null) rc.amount = (Math.round(r.price * (100 - rc.off)) / 100).toFixed(2).replace('.', ',');
+    const el = $('#rcAmount'); if (el) el.value = rc.amount;
+    updateRc();
+  }
+
+  function updateRc() {
+    const r = rcRitual();
+    sheetIn.querySelectorAll('[data-rc]').forEach((b) => b.setAttribute('aria-checked', String(+b.dataset.rc === rc.productId)));
+    sheetIn.querySelectorAll('[data-off]').forEach((b) => b.setAttribute('aria-checked', String(+b.dataset.off === rc.off)));
+    sheetIn.querySelectorAll('[data-rcpay]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.rcpay === rc.payment)));
+    const amount = toAmount(rc.amount);
+    const t = $('#rcTotal'); if (t) t.textContent = r && amount ? zl(amount) : '—';
+    const info = $('#rcOffInfo');
+    if (info) info.textContent = r && amount && amount < r.price ? `Na paragonie: ${r.name} ${zl(r.price)} i rabat ${zl(r.price - amount)}.` : '−15% za 5. rytuał, −20% w urodziny, −30% za 10. rytuał.';
+    const box = $('#rcPayInfo');
+    if (box) {
+      box.hidden = rc.payment !== 'blik_telefon';
+      box.innerHTML = rc.payment !== 'blik_telefon' ? '' : `
+        <div class="row" style="align-items:center"><span class="small">Numer</span><span class="strong gold" style="font-size:20px;letter-spacing:.04em">${esc(BLIK_PHONE)}</span></div>
+        <div class="row" style="align-items:center"><span class="small">Kwota</span><span class="strong">${amount ? zl(amount) : '—'}</span></div>
+        <label class="check"><input type="checkbox" id="rcTransfer" ${rc.transferOk ? 'checked' : ''}> <span>Przelew dotarł na moje konto</span></label>`;
+      const cb = $('#rcTransfer'); if (cb) cb.addEventListener('change', (e) => { rc.transferOk = e.target.checked; });
+    }
+  }
+
+  // Podpowiedzi z kart lojalnościowych przy wpisywaniu nazwiska (uzupełniają e-mail i telefon).
+  function bindRcHints() {
+    let timer;
+    $('#rcName').addEventListener('input', (e) => {
+      clearTimeout(timer);
+      const q = e.target.value.trim();
+      timer = setTimeout(async () => {
+        const box = $('#rcHints');
+        if (!box) return;
+        if (q.length < 3) { box.innerHTML = ''; return; }
+        let list = [];
+        try { list = (await Api.listCards(q)).slice(0, 4); } catch (ex) { /* bez podpowiedzi */ }
+        if (!box.isConnected || $('#rcName').value.trim() !== q) return;
+        box.innerHTML = list.length ? '<div class="panel panel--tight" style="background:var(--bg)">' + list.map((c) => `
+          <div class="client"><button class="client__main" data-rchint="${esc(c.id)}">
+            <span class="avatar">${esc(UI.initials(c.name))}</span>
+            <span><span class="client__name">${esc(c.name)}</span><span class="client__meta">${esc(c.email || 'bez e-maila')}${c.phone ? ' · ' + esc(c.phone) : ''}</span></span>
+          </button></div>`).join('') + '</div>' : '';
+        box.querySelectorAll('[data-rchint]').forEach((b) => b.addEventListener('click', () => {
+          const c = list.find((x) => x.id === b.dataset.rchint);
+          rc.name = c.name; rc.email = c.email || rc.email; rc.phone = c.phone || rc.phone;
+          $('#rcName').value = rc.name; $('#rcEmail').value = rc.email; $('#rcPhone').value = rc.phone;
+          box.innerHTML = '';
+        }));
+      }, 250);
+    });
+  }
+
+  async function issueRc() {
+    const r = rcRitual();
+    const err = $('#rcErr');
+    err.hidden = true;
+    const amount = toAmount(rc.amount);
+    const name = rc.name.trim(), email = rc.email.trim().toLowerCase(), phone = rc.phone.trim();
+    const problem = !r ? 'Wybierz rytuał.' : !(amount >= 1) ? 'Wpisz kwotę.' : amount > r.price ? 'Kwota nie może być wyższa niż cena rytuału (' + zl(r.price) + ').'
+      : !rc.payment ? 'Wybierz sposób płatności.' : rc.payment === 'blik_telefon' && !rc.transferOk ? 'Zaznacz, że przelew BLIK dotarł na konto.'
+      : name.length < 2 ? 'Wpisz imię i nazwisko.' : !EMAIL_RE.test(email) ? 'Wpisz poprawny e-mail, na który przyjdzie e-paragon.' : '';
+    if (problem) { err.textContent = problem; err.hidden = false; return; }
+    const payLabel = RC_PAY.find((x) => x[0] === rc.payment)[1].toLowerCase();
+    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.name}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
+    const btn = $('#rcIssue');
+    btn.disabled = true;
+    btn.textContent = 'Wysyłam do sklepu…';
+    try {
+      const res = await Api.issueReceipt({
+        client_ref: rc.ref || (rc.ref = crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+        product_id: r.id, amount, payment: rc.payment, name, email, phone: phone || undefined
+      });
+      showRcResult(res);
+      rc = newRc();
+      sheetIn.querySelectorAll('#rcAmount, #rcName, #rcEmail, #rcPhone').forEach((x) => { x.value = ''; });
+      $('#rcRest').hidden = true;
+      updateRc();
+      sheet.scrollTop = 0;
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Wystaw paragon';
+  }
+
+  function showRcResult(r) {
+    const box = $('#rcResult');
+    if (!box) return;
+    box.innerHTML = `<section class="panel panel--gold" style="gap:10px">
+      <span class="eyebrow eyebrow--gold">${r.duplicate ? 'Ten paragon był już wysłany' : 'Paragon wystawiony'} · ${esc(r.service)}</span>
+      <span class="strong" style="font-size:17px">Zamówienie nr ${esc(r.order_number)} · ${zl(r.total)}</span>
+      <span class="small">E-paragon pójdzie na ${esc(r.email || 'e-mail klientki')}, gdy drukarka potwierdzi paragon.</span>
+      <div class="hint" id="rcStatus" role="status">Paragon w kolejce…</div>
+      <button class="btn btn--ghost btn--sm" id="rcCheck" hidden>Sprawdź ponownie</button>
+    </section>`;
+    $('#rcCheck').addEventListener('click', () => pollRc(r.order_id));
+    pollRc(r.order_id);
+  }
+
+  // Status co 3 s, najdłużej 60 s (jak przy voucherach).
+  async function pollRc(orderId) {
+    const run = ++rcPoll;
+    const started = Date.now();
+    const again = $('#rcCheck'); if (again) again.hidden = true;
+    const set = (text, kind) => { const el = $('#rcStatus'); if (el) { el.textContent = text; el.className = 'hint' + (kind ? ' hint--' + kind : ''); } };
+    while (run === rcPoll && $('#rcStatus')) {
+      let s = null;
+      try { s = await Api.ritualReceiptStatus(orderId); } catch (e) { /* spróbuję jeszcze raz */ }
+      if (run !== rcPoll) return;
+      if (s && s.receipt === 'confirmed') { set('Paragon wydrukowany ✅ E-paragon wysłany.', 'reward'); loadRcHistory(); return; }
+      if (s && s.receipt === 'error') { set('Błąd paragonu' + (s.error ? ': ' + s.error : '') + '. Sprawdź program eDPS i zamówienie w WooCommerce.', 'error'); loadRcHistory(); break; }
+      if (Date.now() - started >= 60000) { set('Paragon czeka – sprawdź, czy komputer z eDPS jest włączony.', 'error'); loadRcHistory(); break; }
+      set(s && s.receipt === 'sent' ? 'Paragon wysłany do drukarki…' : 'Paragon w kolejce…');
+      await new Promise((res) => setTimeout(res, 3000));
+    }
+    const b = $('#rcCheck'); if (b && run === rcPoll) b.hidden = false;
+  }
+
+  async function loadRcHistory() {
+    const box = $('#rcHistory');
+    if (!box) return;
+    let list;
+    try { list = await Api.ritualReceipts(); } catch (e) { box.innerHTML = '<p class="error" style="padding:12px 0">' + esc(e.message) + '</p>'; return; }
+    if (!box.isConnected) return;
+    if (!list.length) { box.innerHTML = '<p class="small" style="padding:12px 0;margin:0">Nie ma jeszcze paragonów za rytuały z panelu.</p>'; return; }
+    box.innerHTML = list.map((s) => {
+      const d = new Date(s.created_at);
+      const when = UI.fmtShort(s.created_at) + ', ' + d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+      const ok = s.receipt === 'confirmed', bad = s.receipt === 'error';
+      return `<div class="list-row" style="flex-direction:column;gap:4px">
+        <div class="row" style="align-items:baseline"><span>${esc(s.service)}</span><span class="strong" style="color:var(--text)">${zl(s.total)}</span></div>
+        <div class="row" style="align-items:center"><span class="small">${esc(when)} · ${esc(s.name || '')}${s.order_number ? ' · nr ' + esc(s.order_number) : ''}</span>
+          <span class="small ${ok ? 'gold' : bad ? 'error' : ''}">${esc(RECEIPT[s.receipt] || s.receipt)}</span></div>
+        ${s.error ? `<span class="error" style="font-size:12.5px">${esc(s.error)}</span>` : ''}
+      </div>`;
+    }).join('');
+  }
 
   // ---------- promocje (zakładka „Promocje” w aplikacji klientki) ----------
   function renderPromos() {
