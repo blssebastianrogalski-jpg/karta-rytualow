@@ -213,6 +213,9 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 .pay { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pay button { min-height: 64px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .pay button[aria-checked="true"] { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.pay--two { grid-template-columns: repeat(2, 1fr); }
+.pay--four { grid-template-columns: repeat(4, 1fr); }
+.pay--four button { min-height: 52px; font-size: 14px; letter-spacing: .02em; }
 .hint--error { border-color: #6B3A30; color: var(--danger); }
 
 /* Kafelki linków na karcie (strona, voucher, Facebook, Instagram) */

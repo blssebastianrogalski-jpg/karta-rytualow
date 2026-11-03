@@ -57,6 +57,14 @@
     { id: 106, name: 'Voucher kwotowy 200 zł', price: 200 }
   ];
 
+  // Paragon za rytuał (pokaz). Prawdziwa lista i ceny są w WooCommerce, kategoria „Rytuały – paragon”.
+  const DEMO_RITUALS = [
+    ['Kobido UP®', 200], ['Master Kobido UP®', 280], ['Head SPA Premium', 350], ['Access Bars®', 150],
+    ['Refleksologia Stóp Premium', 150], ['Masaż relaksacyjny 60 min', 150], ['Masaż relaksacyjny 90 min', 190],
+    ['Masaż aromaterapeutyczny 60 min', 180], ['Masaż aromaterapeutyczny 90 min', 230], ['Masaż gorącą świecą', 190],
+    ['Masaż głowy, karku i obręczy barkowej', 130], ['Ukojenie dla Żuchwy i Twarzy', 190]
+  ].map(([name, price], i) => ({ id: 201 + i, name, price }));
+
   // ---------- TRYB DEMO ----------
   // Sprawdzanie wolnych godzin w trybie pokazowym (w bazie robi to prosby-konflikty.sql)
   const Slots = {
@@ -676,6 +684,35 @@
         return { order_number: s.order_number, total: s.total, paid: true, failed: false, receipt: s.receipt };
       }),
       voucherSales: () => run(() => { guard(); return (load().sales || []).slice(0, 20); }),
+      // paragon za rytuał (pokaz: bez sklepu i bez drukarki)
+      ritualsList: () => run(() => { guard(); return DEMO_RITUALS.slice(); }),
+      issueReceipt: (p) => run(() => {
+        guard();
+        const r = DEMO_RITUALS.find((x) => x.id === p.product_id);
+        if (!r) throw new Error('Wybierz rytuał z listy.');
+        if (!(p.amount >= 1 && p.amount <= r.price)) throw new Error('Kwota musi być od 1 zł do ceny rytuału (' + r.price + ' zł).');
+        const db = load();
+        db.ritualReceipts = db.ritualReceipts || [];
+        const prev = db.ritualReceipts.find((x) => x.ref === p.client_ref);
+        if (prev) return Object.assign({ duplicate: true }, prev);
+        const id = 2000 + db.ritualReceipts.length + 1;
+        const row = { ref: p.client_ref, order_id: id, order_number: String(id), created_at: new Date().toISOString(), service: r.name, total: p.amount,
+          payment: p.payment, name: p.name, email: p.email, receipt: 'queued' };
+        db.ritualReceipts.unshift(row);
+        save(db);
+        return row;
+      }),
+      ritualReceiptStatus: (id) => run(() => {
+        guard();
+        const db = load();
+        const s = (db.ritualReceipts || []).find((x) => x.order_id === id);
+        if (!s) throw new Error('Nie ma takiego paragonu.');
+        const age = (Date.now() - new Date(s.created_at)) / 1000;
+        s.receipt = age > 7 ? 'confirmed' : age > 3 ? 'sent' : 'queued';
+        save(db);
+        return s;
+      }),
+      ritualReceipts: () => run(() => { guard(); return (load().ritualReceipts || []).slice(0, 20); }),
       // integracja Booksy (pokaz: przykładowy stan po podłączeniu skryptu)
       booksyStatus: () => run(() => {
         guard();
@@ -742,6 +779,26 @@
       return data;
     };
     const sale = (body) => invoke('sprzedaz-vouchera', body);
+    // Paragon za rytuał: fragment kodu w WordPressie (paragon-za-rytual.php).
+    // Sklep sprawdza w Supabase, czy token należy do osoby z panelu, więc nie ma tu tajnego klucza.
+    const PARAGON_API = CFG.PARAGON_API || 'https://twojecialotwojdobrostan.pl/wp-json/tctd/v1/paragon';
+    const paragon = async (path, body) => {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session && data.session.access_token;
+      if (!token) throw new Error('Zaloguj się ponownie w panelu.');
+      let res;
+      try {
+        res = await fetch(PARAGON_API + path, {
+          method: body ? 'POST' : 'GET',
+          headers: body ? { 'X-TCTD-Staff': token, 'Content-Type': 'application/json' } : { 'X-TCTD-Staff': token },
+          body: body ? JSON.stringify(body) : undefined
+        });
+      } catch (e) { throw new Error('Brak połączenia ze sklepem. Spróbuj ponownie.'); }
+      const j = await res.json().catch(() => null);
+      if (res.status === 404 && j && j.code === 'rest_no_route') throw new Error('W sklepie nie ma jeszcze fragmentu „Paragon za rytuał”.');
+      if (!res.ok) throw new Error((j && j.message) || 'Sklep odpowiedział błędem ' + res.status + '.');
+      return j;
+    };
     return {
       demo: false,
       registerCard: ({ name, phone, day, month, ref }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_ref: ref || null }),
@@ -826,6 +883,10 @@
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),
       receiptStatus: (orderId) => sale({ action: 'status', order_id: orderId }),
+      ritualsList: () => paragon('/rytualy'),
+      issueReceipt: (p) => paragon('', p),
+      ritualReceiptStatus: (id) => paragon('/' + id),
+      ritualReceipts: () => paragon('/historia'),
       booksyStatus: () => rpc('booksy_status', {}),
       booksyNewKey: () => rpc('booksy_new_key', {}),
       booksyDisconnect: () => rpc('booksy_disconnect', {}),
