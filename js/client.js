@@ -648,7 +648,7 @@
       box.hidden = !off;
       if (!off) { box.innerHTML = ''; return; }
       const next = openDays(d, 3);
-      box.innerHTML = `<span class="small" style="color:var(--text)">W tym dniu studio jest nieczynne.${next.length ? ' Najbliższe wolne dni:' : ' Zadzwoń, proszę, ustalimy termin.'}</span>
+      box.innerHTML = `<span class="small" style="color:var(--text)">W tym dniu studio jest nieczynne.${next.length ? ' Najbliższe wolne dni:' : ' Zadzwoń, proszę, znajdę dla Ciebie termin.'}</span>
         ${next.length ? `<div class="chips" style="flex-wrap:wrap">${next.map((x) => `<button type="button" class="pick" data-day="${x}" style="min-height:44px;padding:8px 12px;flex:1 1 30%;justify-content:center">${esc(shortDay(x))}</button>`).join('')}</div>` : ''}`;
       box.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => { $('#rDay').value = b.dataset.day; checkDay(); }));
     };
