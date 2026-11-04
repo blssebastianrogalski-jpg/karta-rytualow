@@ -205,6 +205,7 @@
       ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' open' : ''}>
         <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
+        <div id="gapAuto"></div>
         <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
       </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
@@ -213,9 +214,12 @@
           <span>${esc(dateLabel(g.day))}, ${esc(range(g))} <span class="tag">${g.kind === 'cancel' ? 'po odwołaniu' : 'wolne godziny'}</span></span>
           <span class="small">${g.info && (g.kind === 'cancel' || /ręcznie/.test(g.info)) ? esc(g.info) + ' · ' : ''}${esc(GAP_STATUS[g.status] || g.status)}${g.sent_at ? ' · push: ' + (g.push_n || 0) + ', SMS: ' + (g.sms_n || 0) : ''}</span>
           ${taken(g)}
+          ${g.status === 'open' ? `<button class="btn btn--line btn--sm" data-gap-sms="${esc(String(g.id))}" style="align-self:flex-start;margin-top:4px">SMS z mojego telefonu</button>` : ''}
         </div>`).join('')}</div>
       </details>` : ''}`;
     box.querySelectorAll('[data-gap-day]').forEach((b) => b.addEventListener('click', () => openGapSend(forecast.find((f) => f.day === b.dataset.gapDay))));
+    box.querySelectorAll('[data-gap-sms]').forEach((b) => b.addEventListener('click', () => openGapPhone(b.dataset.gapSms)));
+    loadGapAuto();
     if (location.hash === '#wolne') { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
   }
 
@@ -263,6 +267,55 @@
     });
     upd();
   }
+  // Po odwołaniu: SMS automatycznie przez SMSPLANET albo tylko push (SMS-y z mojego telefonu)
+  async function loadGapAuto() {
+    const box = $('#gapAuto');
+    if (!box) return;
+    let on;
+    try { on = await Api.gapSmsAutoGet(); } catch (e) { box.innerHTML = ''; return; } // baza jeszcze bez sms-z-telefonu.sql
+    box.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)">
+      <span class="eyebrow">SMS po odwołaniu wizyty</span>
+      <div class="tabs tabs--small" role="radiogroup" aria-label="SMS po odwołaniu wizyty">
+        <button role="radio" data-auto="1" aria-selected="${on}">Sam (SMSPLANET)</button>
+        <button role="radio" data-auto="0" aria-selected="${!on}">Z mojego telefonu</button>
+      </div>
+      <span class="small">${on ? 'Push i SMS wychodzą same, SMS-y z kredytów SMSPLANET.' : 'Sam wychodzi tylko push. SMS-y wyślesz z telefonu: „SMS z mojego telefonu” przy wysłanej ofercie.'}</span>
+    </div>`;
+    box.querySelectorAll('[data-auto]').forEach((b) => b.addEventListener('click', async () => {
+      try { await Api.gapSmsAutoSet(b.dataset.auto === '1'); loadGapAuto(); } catch (e) { toast(e.message); }
+    }));
+  }
+
+  // SMS-y z mojego telefonu: przy każdej klientce link sms: z gotowym numerem i treścią
+  async function openGapPhone(offerId) {
+    let r;
+    try { r = await Api.gapSmsRecipients(offerId); } catch (e) { toast(e.message); return; }
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const href = (tel) => 'sms:' + tel + (ios ? '&' : '?') + 'body=' + encodeURIComponent(r.msg || '');
+    const left = () => r.list.filter((c) => !c.done).length;
+    const row = (c) => `<div class="list-row" style="gap:12px${c.done ? ';opacity:.55' : ''}" data-row="${esc(c.card_id)}">
+        <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span class="strong">${esc(c.name)}</span><span class="small">${esc(c.phone)}</span></div>
+        ${c.done ? '<span class="small gold" style="flex:0 0 auto">✓ wysłany</span>' : `<a class="btn btn--gold btn--sm" style="flex:0 0 auto;width:auto" href="${esc(href(c.tel))}" data-sms="${esc(c.card_id)}">SMS</a>`}
+      </div>`;
+    const paint = () => {
+      $('#gpLeft').textContent = r.list.length ? 'Zostało ' + left() + ' z ' + r.list.length + '.' : '';
+      $('#gpList').innerHTML = r.list.length ? r.list.map(row).join('') : '<p class="small" style="margin:0">Brak klientek ze zgodą na SMS i polskim numerem.</p>';
+      sheetIn.querySelectorAll('[data-sms]').forEach((a) => a.addEventListener('click', () => {
+        const c = r.list.find((x) => x.card_id === a.dataset.sms);
+        // najpierw otwiera się aplikacja SMS, a panel odhacza klientkę w tle
+        setTimeout(async () => { try { await Api.gapSmsMark(offerId, c.card_id); c.done = true; paint(); } catch (e) { toast(e.message); } }, 300);
+      }));
+    };
+    openSheet(`${bar('SMS z mojego telefonu')}
+      ${r.msg ? `<p class="lead" style="margin-top:-8px">Stuknij „SMS”. Otworzy się Twoja aplikacja do wiadomości z gotowym numerem i treścią, wystarczy „Wyślij”. Potem wróć tutaj do kolejnej klientki.</p>
+      <div class="hint">${esc(r.msg)}</div>
+      <p class="small" id="gpLeft" style="margin:0"></p>
+      <div class="panel panel--tight" id="gpList"></div>
+      <p class="small" style="margin:0">Każda klientka dostaje osobnego SMS-a, nikt nie widzi cudzych numerów. Tylko klientki ze zgodą, z polskim numerem i bez wizyty tego dnia.</p>`
+      : '<p class="lead" style="margin-top:-8px">Ten termin jest już zajęty albo minął, więc nie ma czego wysyłać.</p><p id="gpLeft" hidden></p><div id="gpList" hidden></div>'}`);
+    if (r.msg) paint();
+  }
+
   // „do 3 h” – ile czasu jest w oknie
   function gapLen(w) {
     const m = Math.round((new Date(w.end_at) - new Date(w.start_at)) / 6e4);
