@@ -170,7 +170,7 @@
     if (!a || !a.n) { box.innerHTML = ''; return; }
     const when = new Date(a.last_at).toLocaleString('pl-PL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
     box.innerHTML = `<div class="hint hint--error" style="display:flex;flex-direction:column;gap:10px">
-      <span><span class="strong">SMS-y nie wychodzą.</span> Przez ostatnią dobę SMSPLANET odrzucił ${a.n} ${UI.plural(a.n, 'SMS', 'SMS-y', 'SMS-ów')} (ostatnio ${esc(when)})${a.error ? ': ' + esc(a.error) : ''}. Najczęściej to brak środków. Klientki z aplikacją dostały push.</span>
+      <span><span class="strong">SMS-y nie wychodzą.</span> Przez ostatnią dobę SMSPLANET odrzucił ${a.n} ${UI.plural(a.n, 'SMS', 'SMS-y', 'SMS-ów')} (ostatnio ${esc(when)})${a.error ? ': ' + esc(a.error) : ''}.${/środk/i.test(a.error || '') ? '' : ' Najczęściej to brak środków.'} Klientki z aplikacją dostały push.</span>
       <span style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn btn--line btn--sm" href="https://panel.smsplanet.pl/" target="_blank" rel="noopener">Doładuj SMSPLANET</a>
         <button class="btn btn--ghost btn--sm" id="smsAlertHide">Ukryj</button>
