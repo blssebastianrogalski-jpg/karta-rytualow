@@ -96,6 +96,7 @@
       <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
+      <div id="smsAlert"></div>
       <div id="gaps"></div>
       <div id="reqs"></div>
       <div id="bdays"></div>
@@ -149,6 +150,7 @@
     Promise.all([loadRefs(), loadAbsences()]).then(loadPlan);
     loadList();
     loadRequests();
+    loadSmsAlert();
     loadGaps();
   }
 
@@ -159,6 +161,27 @@
   let gaps = [], forecast = null, gapChannel = 'both';
   const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
   const bigDay = (d) => d === Rules.dayPL(0) ? 'Dziś' : d === Rules.dayPL(1) ? 'Jutro' : dateLabel(d).replace(/^./, (ch) => ch.toUpperCase());
+  // Ostrzeżenie: SMSPLANET odrzuca SMS-y (np. brak środków)
+  async function loadSmsAlert() {
+    const box = $('#smsAlert');
+    let a = null;
+    try { a = await Api.smsAlert(); } catch (e) { a = null; } // baza jeszcze bez ostrzeżeń o SMS-ach
+    if (!box) return;
+    if (!a || !a.n) { box.innerHTML = ''; return; }
+    const when = new Date(a.last_at).toLocaleString('pl-PL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+    box.innerHTML = `<div class="hint hint--error" style="display:flex;flex-direction:column;gap:10px">
+      <span><span class="strong">SMS-y nie wychodzą.</span> Przez ostatnią dobę SMSPLANET odrzucił ${a.n} ${UI.plural(a.n, 'SMS', 'SMS-y', 'SMS-ów')} (ostatnio ${esc(when)})${a.error ? ': ' + esc(a.error) : ''}.${/środk/i.test(a.error || '') ? '' : ' Najczęściej to brak środków.'} Klientki z aplikacją dostały push.</span>
+      <span style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn btn--line btn--sm" href="https://panel.smsplanet.pl/" target="_blank" rel="noopener">Doładuj SMSPLANET</a>
+        <button class="btn btn--ghost btn--sm" id="smsAlertHide">Ukryj</button>
+      </span>
+    </div>`;
+    $('#smsAlertHide').addEventListener('click', async () => {
+      try { await Api.smsAlertDismiss(); } catch (e) { /* zostaw */ }
+      box.innerHTML = '';
+    });
+  }
+
   async function loadGaps() {
     const box = $('#gaps');
     try { gaps = await Api.gapList(); } catch (e) { gaps = []; } // baza jeszcze bez wolnych terminów
@@ -182,7 +205,7 @@
       ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' open' : ''}>
         <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
-        <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, jak dotąd.</p>
+        <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
       </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
         <summary class="eyebrow" style="cursor:pointer">Wysłane oferty · ostatnie 7 dni: ${rest.length}</summary>
