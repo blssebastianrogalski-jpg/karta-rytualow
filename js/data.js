@@ -506,6 +506,21 @@
         return { plan_id: p.id, day: g.day, start_at: p.start_at, service };
       }),
       // pokaz: ostrzeżenie o odrzuconych SMS-ach (po „Ukryj” znika)
+      // pokaz: SMS-y z mojego telefonu
+      gapSmsRecipients: (offerId) => run(() => {
+        guard(); const db = load(); const g = (db.gaps || []).find((x) => String(x.id) === String(offerId));
+        if (!g) throw new Error('Nie ma takiej oferty.');
+        db.gapSmsDone = db.gapSmsDone || {};
+        const done = db.gapSmsDone[g.id] || [];
+        const t = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+        const windows = t(g.start_at) + '–' + t(g.end_at);
+        const list = db.cards.filter((c) => c.phone && c.phone.replace(/\D/g, '').length >= 9).map((c) => ({ card_id: c.id, name: c.name, phone: c.phone, tel: '+48' + c.phone.replace(/\D/g, '').slice(-9), done: done.includes(c.id) }))
+          .sort((x, y) => (x.done - y.done) || x.name.localeCompare(y.name));
+        return { windows, list, msg: (g.kind === 'cancel' ? 'Zwolnil sie termin ' : 'Wolny termin ') + 'dzis: ' + windows.replace('–', '-') + '. Kto pierwszy, ten lepszy + dodatkowa pieczatka! karta.twojecialotwojdobrostan.pl lub 500694094' };
+      }),
+      gapSmsMark: (offerId, cardId) => run(() => { guard(); const db = load(); db.gapSmsDone = db.gapSmsDone || {}; (db.gapSmsDone[offerId] = db.gapSmsDone[offerId] || []).push(cardId); save(db); }),
+      gapSmsAutoGet: () => run(() => { guard(); return load().gapSmsAuto !== false; }),
+      gapSmsAutoSet: (on) => run(() => { guard(); const db = load(); db.gapSmsAuto = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
       gapList: () => run(() => {
@@ -868,6 +883,10 @@
       gapTake: (token, offerId, start, service) => rpc('gap_take', { p_token: token, p_offer: offerId, p_start: start, p_service: service }),
       gapList: () => rpc('gap_list', {}),
       smsAlert: () => rpc('sms_alert', {}),
+      gapSmsRecipients: (offerId) => rpc('gap_sms_recipients', { p_offer: offerId }),
+      gapSmsMark: (offerId, cardId) => rpc('gap_sms_mark', { p_offer: offerId, p_card: cardId }),
+      gapSmsAutoGet: () => rpc('gap_sms_auto_get', {}),
+      gapSmsAutoSet: (on) => rpc('gap_sms_auto_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
