@@ -182,7 +182,7 @@
       ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' open' : ''}>
         <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
-        <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, jak dotąd.</p>
+        <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
       </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
         <summary class="eyebrow" style="cursor:pointer">Wysłane oferty · ostatnie 7 dni: ${rest.length}</summary>
