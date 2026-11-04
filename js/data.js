@@ -505,6 +505,9 @@
         save(db);
         return { plan_id: p.id, day: g.day, start_at: p.start_at, service };
       }),
+      // pokaz: ostrzeżenie o odrzuconych SMS-ach (po „Ukryj” znika)
+      smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
+      smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
       gapList: () => run(() => {
         guard(); const db = load();
         return (db.gaps || []).slice().sort((a, b) => (b.status === 'ask') - (a.status === 'ask') || b.day.localeCompare(a.day) || a.start_at.localeCompare(b.start_at))
@@ -864,6 +867,8 @@
       myGapOffers: (token) => rpc('my_gap_offers', { p_token: token }),
       gapTake: (token, offerId, start, service) => rpc('gap_take', { p_token: token, p_offer: offerId, p_start: start, p_service: service }),
       gapList: () => rpc('gap_list', {}),
+      smsAlert: () => rpc('sms_alert', {}),
+      smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
       gapSendNow: (day, windows, channel) => rpc('gap_send_now', { p_day: day, p_windows: windows || null, p_channel: channel }),

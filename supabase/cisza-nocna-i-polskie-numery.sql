@@ -1,9 +1,11 @@
--- Cisza nocna i SMS tylko na polskie numery (oferty wolnych terminów).
+-- Cisza nocna, SMS tylko na polskie numery i ostrzeżenie, gdy SMSPLANET odrzuca SMS-y.
 --  1) Oferta po odwołaniu wizyty nie wychodzi między 21:00 a 8:00 (czas polski).
 --     Czeka do 8:00, wtedy sprawdzam jeszcze raz, czy termin jest nadal wolny i aktualny, i dopiero wysyłam push + SMS.
 --     Godziny można zmienić: update public.booking_settings set gap_quiet_from = 21, gap_quiet_to = 8 where id = 1;
 --  2) SMS z ofertą idzie tylko na polskie numery komórkowe (9 cyfr, ewentualnie z +48 / 0048).
 --     Numer zagraniczny dostaje tylko push, jeśli ma aplikację.
+--  3) Co 5 minut sprawdzam odpowiedzi SMSPLANET. Gdy SMS zostanie odrzucony (np. brak środków),
+--     w panelu pojawia się czerwone ostrzeżenie, a na telefon studia przychodzi push (najwyżej raz na 3 godziny).
 --  Ręczna wysyłka „Wolne godziny” z panelu działa jak dotąd, o każdej porze (to moja decyzja przy wysyłce).
 -- Wymaga wcześniejszego wolne-terminy.sql i wolne-terminy-recznie.sql. Uruchom w Supabase → SQL Editor (można ponownie). Nie kasuje danych.
 
@@ -123,3 +125,79 @@ begin
   -- zwykłe luki: tylko ręcznie z panelu (gap_send_now)
 end $$;
 revoke execute on function public.gap_process(timestamptz) from public, anon, authenticated;
+
+-- ---------- Ostrzeżenie: SMSPLANET odrzuca SMS-y ----------
+-- Odpowiedzi funkcji sms-wyslij trafiają do net._http_response (Supabase trzyma je kilka godzin), więc co 5 minut je przeglądam.
+create table if not exists public.sms_failures (
+  id      bigint generated always as identity primary key,
+  resp_id bigint unique,
+  at      timestamptz not null default now(),
+  error   text
+);
+alter table public.sms_failures enable row level security;
+
+create table if not exists public.sms_alert_state (
+  id           int primary key default 1 check (id = 1),
+  last_resp    bigint not null default 0,     -- ostatnia przejrzana odpowiedź
+  last_push    timestamptz,                   -- kiedy ostatnio poszedł push do studia
+  dismissed_at timestamptz                    -- „Ukryj” w panelu
+);
+insert into public.sms_alert_state (id) values (1) on conflict (id) do nothing;
+alter table public.sms_alert_state enable row level security;
+
+create or replace function public.sms_check()
+returns void language plpgsql security definer set search_path = public as $$
+declare st public.sms_alert_state; top bigint; n int; err text;
+begin
+  select * into st from public.sms_alert_state where id = 1 for update;
+  select max(id) into top from net._http_response;
+  if top is null then return; end if;
+  if top < st.last_resp then st.last_resp := 0; end if;  -- licznik odpowiedzi zaczął się od nowa
+  with x as (
+    insert into public.sms_failures (resp_id, at, error)
+    select r.id, r.created, left(coalesce(regexp_replace(substring(r.content from '"error":"([^"]*)"'), '^SMSPLANET:\s*', ''), 'SMS odrzucony'), 300)
+      from net._http_response r
+     where r.id > st.last_resp and r.content like '%"ok":false%' and r.content like '%SMSPLANET%'
+    on conflict (resp_id) do nothing
+    returning error)
+  select count(*), max(error) into n, err from x;
+  update public.sms_alert_state set last_resp = top where id = 1;
+  if n > 0 and (st.last_push is null or st.last_push < now() - interval '3 hours') then
+    perform public.gap_owner_push('SMS-y nie wychodzą',
+      'SMSPLANET odrzucił ' || n || ' SMS' || case when n = 1 then '' when n % 10 between 2 and 4 and n % 100 not between 12 and 14 then '-y' else '-ów' end
+      || ' (' || coalesce(err, '') || '). Sprawdź środki w SMSPLANET.', 'panel.html');
+    update public.sms_alert_state set last_push = now() where id = 1;
+  end if;
+exception when others then
+  null; -- sprawdzanie nigdy nie psuje innych zadań
+end $$;
+revoke execute on function public.sms_check() from public, anon, authenticated;
+
+select cron.unschedule(jobname) from cron.job where jobname = 'sms-check';
+select cron.schedule('sms-check', '*/5 * * * *', $$select public.sms_check()$$);
+-- Wyłączenie w razie potrzeby:  select cron.unschedule('sms-check');
+
+-- Panel: odrzucone SMS-y z ostatniej doby (po „Ukryj” liczą się tylko nowe)
+create or replace function public.sms_alert()
+returns json language plpgsql stable security definer set search_path = public as $$
+declare st public.sms_alert_state; r json;
+begin
+  if not public.is_staff() then raise exception 'Brak uprawnień.'; end if;
+  select * into st from public.sms_alert_state where id = 1;
+  select case when count(*) = 0 then null else json_build_object(
+           'n', count(*), 'last_at', max(f.at),
+           'error', (select f2.error from public.sms_failures f2 where f2.at > now() - interval '24 hours' order by f2.at desc limit 1)) end
+    into r
+    from public.sms_failures f
+   where f.at > now() - interval '24 hours' and f.at > coalesce(st.dismissed_at, '-infinity');
+  return r;
+end $$;
+
+create or replace function public.sms_alert_dismiss()
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_staff() then raise exception 'Brak uprawnień.'; end if;
+  update public.sms_alert_state set dismissed_at = now() where id = 1;
+end $$;
+revoke all on function public.sms_alert(), public.sms_alert_dismiss() from public, anon;
+grant execute on function public.sms_alert(), public.sms_alert_dismiss() to authenticated;
