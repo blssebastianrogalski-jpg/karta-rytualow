@@ -394,7 +394,7 @@
         return (db.plan || []).filter((p) => p.day === day).map((p) => {
           const c = db.cards.find((x) => x.id === p.card_id);
           return c ? { ...p, name: c.name, stamps: c.stamps, source: c.source, phone: c.phone, bday_today: Rules.isBdayToday(c.bday_day, c.bday_month), birthday_used_year: c.birthday_used_year } : null;
-        }).filter(Boolean);
+        }).filter(Boolean).sort((x, y) => (x.start_at || '~').localeCompare(y.start_at || '~'));
       }),
       planRange: (from, to) => run(() => {
         guard();
@@ -404,13 +404,22 @@
           return c ? { ...p, name: c.name, stamps: c.stamps, source: c.source, phone: c.phone } : null;
         }).filter(Boolean).sort((x, y) => (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~')));
       }),
-      planAdd: (cardId, service, day) => run(() => {
+      planAdd: (cardId, service, day, time) => run(() => {
         guard();
         const db = load();
         day = day || Rules.dayPL(0);
         db.plan = db.plan || [];
         if (db.plan.some((p) => p.card_id === cardId && p.day === day && p.status === 'planned')) throw new Error('Ta klientka jest już w planie na ten dzień.');
-        db.plan.push({ id: Date.now(), card_id: cardId, day, service: service || null, status: 'planned' });
+        db.plan.push({ id: Date.now(), card_id: cardId, day, service: service || null, status: 'planned', start_at: time ? new Date(day + 'T' + time).toISOString() : null });
+        save(db);
+      }),
+      planSetTime: (planId, time) => run(() => {
+        guard();
+        const db = load();
+        const p = (db.plan || []).find((x) => x.id === planId);
+        if (!p) throw new Error('Nie ma tej wizyty w planie.');
+        if (p.booking_id) throw new Error('Godzinę wizyty z Booksy zmień w Booksy, plan zaktualizuje się sam.');
+        p.start_at = time ? new Date(p.day + 'T' + time).toISOString() : null;
         save(db);
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
@@ -866,7 +875,8 @@
       useBirthday: (id, service, planId) => rpc('use_birthday', { p_id: id, p_service: service || null, p_plan_id: planId || null }),
       planList: (day) => rpc('plan_list', day ? { p_day: day } : {}),
       planRange: (from, to) => rpc('plan_range', { p_from: from, p_to: to }),
-      planAdd: (cardId, service, day) => rpc('plan_add', { p_card: cardId, p_service: service || null, p_day: day || null }),
+      planAdd: (cardId, service, day, time) => rpc('plan_add', Object.assign({ p_card: cardId, p_service: service || null, p_day: day || null }, time ? { p_time: time } : {})),
+      planSetTime: (planId, time) => rpc('plan_set_time', { p_plan_id: planId, p_time: time || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
       requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {}, f.moveOf ? { p_move_of: f.moveOf } : {})),

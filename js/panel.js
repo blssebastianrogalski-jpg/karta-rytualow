@@ -95,9 +95,7 @@
       <h1>Panel studia</h1>
       <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
-      ${'Notification' in window && 'PushManager' in window && Notification.permission !== 'denied' ? '<button class="btn btn--line" id="ownerPushBtn">Powiadomienia o dniu w studiu na tym telefonie</button>' : ''}
       <div id="smsAlert"></div>
-      <div id="gaps"></div>
       <div id="reqs"></div>
       <div id="bdays"></div>
       <div id="refs"></div>
@@ -113,8 +111,9 @@
           <input class="input" id="planDate" type="date" min="${Rules.dayPL(2)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${planMoreDay || Rules.dayPL(2)}" style="background:var(--surface)">
         </div>
         <div id="plan"><div class="spinner"></div></div>
-        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej. „×” usuwa odwołaną wizytę.</p>
+        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej, i od razu ustawisz godzinę. „Ustaw godzinę” pod wizytą zmienia godzinę, „×” usuwa odwołaną wizytę.</p>
       </section>
+      <div id="gaps"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
         <span class="eyebrow">Moje dni wolne</span>
         <div id="absences"><div class="spinner"></div></div>
@@ -125,7 +124,8 @@
         <input class="input" id="search" type="search" placeholder="Szukaj po imieniu, nazwisku lub telefonie" value="${esc(query)}" style="background:var(--surface)">
         <div class="panel panel--tight" id="list"><div class="spinner"></div></div>
       </section>
-      <button class="btn btn--ghost" id="integrBtn">Integracje: Booksy i Kalendarz Google</button>`;
+      <button class="btn btn--ghost" id="integrBtn">Integracje: Booksy i Kalendarz Google</button>
+      <section class="panel" id="ownerPushBox" style="gap:8px" hidden></section>`;
     bindTabs();
     $('#newBtn').addEventListener('click', () => openNewCard());
     $('#receiptBtn').addEventListener('click', () => openReceipt());
@@ -144,8 +144,7 @@
       loadList();
     });
     $('#absAddBtn').addEventListener('click', openAbsenceAdd);
-    const opb = $('#ownerPushBtn');
-    if (opb) opb.addEventListener('click', enableOwnerPush);
+    loadOwnerPush();
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
     Promise.all([loadRefs(), loadAbsences()]).then(loadPlan);
     loadList();
@@ -157,6 +156,7 @@
   // ---------- wolne terminy (po odwołaniu wysyłają się same, zwykłe luki tylko ręcznie z „Wolne godziny”) ----------
   const GAP_STATUS = { pending: 'wyślę za kilka minut', open: 'wysłana, czeka na chętną', closed: 'zajęta albo minęła', skipped: 'nie wysłana' };
   const GAP_DAYS = 5;      // dziś + tyle dni naprzód
+  let gapOpen = false;     // „Wolne godziny” domyślnie zwinięte
   const CHANNEL = { both: 'Push i SMS', push: 'Tylko push', sms: 'Tylko SMS' };
   let gaps = [], forecast = null, gapChannel = 'both';
   const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
@@ -202,8 +202,8 @@
       </div>`;
     };
     box.innerHTML = `
-      ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' open' : ''}>
-        <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni</summary>
+      ${forecast ? `<details class="panel panel--gold" id="gapFc" style="padding:14px 16px;gap:10px"${gapOpen || location.hash === '#wolne' ? ' open' : ''}>
+        <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' · są wolne' : ''}</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
         <div id="gapAuto"></div>
         <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
@@ -217,6 +217,8 @@
           ${g.status === 'open' ? `<button class="btn btn--line btn--sm" data-gap-sms="${esc(String(g.id))}" style="align-self:flex-start;margin-top:4px">SMS z mojego telefonu</button>` : ''}
         </div>`).join('')}</div>
       </details>` : ''}`;
+    const fc = $('#gapFc');
+    if (fc) fc.addEventListener('toggle', () => { gapOpen = fc.open; }); // zwinięte, dopóki sama nie rozwiniesz
     box.querySelectorAll('[data-gap-day]').forEach((b) => b.addEventListener('click', () => openGapSend(forecast.find((f) => f.day === b.dataset.gapDay))));
     box.querySelectorAll('[data-gap-sms]').forEach((b) => b.addEventListener('click', () => openGapPhone(b.dataset.gapSms)));
     loadGapAuto();
@@ -526,7 +528,26 @@
     if (sb) sb.addEventListener('click', () => { try { localStorage.setItem(REF_SEEN, refs[0].created_at); } catch (e) { /* ignore */ } loadRefs(); });
   }
 
-  // Powiadomienia dla studia (dzień w studiu, urodziny) na tym telefonie.
+  // Powiadomienia dla studia na tym telefonie: włącza się raz, nie codziennie (sekcja na dole panelu).
+  async function loadOwnerPush() {
+    const box = $('#ownerPushBox');
+    if (!box || !('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)) return;
+    let sub = null;
+    try {
+      const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 3000))]);
+      sub = reg ? await reg.pushManager.getSubscription() : null;
+    } catch (e) { sub = null; }
+    if (!document.body.contains(box)) return;
+    const perm = Notification.permission, on = perm === 'granted' && !!sub;
+    box.hidden = false;
+    box.innerHTML = `<span class="eyebrow">Ustawienia · powiadomienia studia</span>
+      <span class="small" style="color:var(--text-2)">${on ? '<span class="gold">Włączone na tym telefonie.</span> Nie trzeba ich klikać codziennie: telefon sam dostaje wieczorny przegląd jutrzejszego dnia i urodzin oraz nowe prośby o termin.'
+        : perm === 'denied' ? 'Zablokowane w ustawieniach telefonu dla tej strony. Odblokuj powiadomienia w ustawieniach przeglądarki, a potem wróć tutaj.'
+        : 'Wyłączone na tym telefonie. Włącz raz, a telefon będzie dostawał wieczorny przegląd jutrzejszego dnia i urodzin oraz nowe prośby o termin.'}</span>
+      ${perm === 'denied' ? '' : `<button class="btn btn--line btn--sm" id="ownerPushBtn" style="align-self:flex-start">${on ? 'Włącz ponownie (gdyby nie przychodziły)' : 'Włącz powiadomienia'}</button>`}`;
+    const b = $('#ownerPushBtn');
+    if (b) b.addEventListener('click', enableOwnerPush);
+  }
   async function enableOwnerPush() {
     try {
       const perm = await Notification.requestPermission();
@@ -560,16 +581,18 @@
       const tags = (p.booking_id ? ' <span class="tag">Booksy</span>' : '') + (p.conflict ? ' <span class="tag">kolizja</span>' : '') +
         (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '') +
         (refWelcome.has(p.card_id) && !done ? ' <span class="tag tag--solid">z polecenia −10%</span>' : '');
-      const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : '') + (p.service || 'rytuał') + ' · ' +
+      const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : done || p.booking_id ? '' : 'bez godziny · ') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
-      return `<div class="client">
+      const timeLink = done || p.booking_id ? '' : `<button class="linkbtn" data-plan-time="${esc(p.id)}" style="flex-basis:100%;text-align:left;min-height:34px;padding:0 6px 4px 58px;font-size:13.5px">${p.start_at ? 'Zmień godzinę' : 'Ustaw godzinę wizyty'}</button>`;
+      return `<div class="client" style="flex-wrap:wrap;row-gap:0">
         <button class="client__main" ${target} style="${done ? 'opacity:.6' : ''}">
           <span class="avatar" style="${done ? 'background:var(--gold);color:var(--on-gold);border-color:var(--gold)' : ''}">${done ? '✓' : esc(UI.initials(p.name))}</span>
           <span><span class="client__name">${esc(p.name)}${tags}</span>
           <span class="client__meta">${esc(meta)}</span></span>
         </button>
         ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day || !p.card_id ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
+        ${timeLink}
       </div>`;
     };
     if (day < 2) {
@@ -586,6 +609,7 @@
     }
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
     box.querySelectorAll('[data-integr]').forEach((b) => b.addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); }));
+    box.querySelectorAll('[data-plan-time]').forEach((b) => b.addEventListener('click', () => openPlanTime(plan.find((x) => String(x.id) === b.dataset.planTime))));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
       const p = plan.find((x) => String(x.id) === b.dataset.planDel);
@@ -627,9 +651,100 @@
       </div>`;
     }).join('');
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
-    box.querySelectorAll('[data-plan-add]').forEach((b) => b.addEventListener('click', async () => {
-      try { await Api.planAdd(b.dataset.planAdd, null, planTarget()); toast('Dodano do planu na ' + targetName() + '.'); loadPlan(); } catch (e) { fail(e); }
+    box.querySelectorAll('[data-plan-add]').forEach((b) => b.addEventListener('click', () => {
+      const c = list.find((x) => String(x.id) === b.dataset.planAdd);
+      openPlanAdd(c, planTarget());
     }));
+  }
+
+  // ---------- godzina wizyty w planie ----------
+  const svcOptions = (sel) => CFG.SERVICES.map((x) => `<option${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
+  // ostrzeżenie o kolizji z planem / godzinami pracy (nie blokuje zapisu); self = imię tej klientki (jej stara godzina to nie kolizja)
+  function timeWarn(dayOf, timeSel, svcSel, warnSel, self, more) {
+    const run = async () => {
+      const el = $(warnSel); if (!el) return;
+      const time = $(timeSel).value, day = typeof dayOf === 'function' ? dayOf() : dayOf;
+      let res = null;
+      if (day && time) { try { res = await Api.slotConflict(day, time, $(svcSel) ? $(svcSel).value : null); } catch (ex) { res = null; } }
+      if (res && self && /^Nakłada się na: /.test(res)) {
+        const others = res.replace(/^Nakłada się na: /, '').split(', ').filter((x) => x.indexOf(self + ' ') !== 0);
+        res = others.length ? 'Nakłada się na: ' + others.join(', ') : null;
+      }
+      el.textContent = res ? 'Uwaga: ' + res : ''; el.hidden = !res;
+    };
+    [timeSel, svcSel, ...(more || [])].forEach((id) => { const el = id && $(id); if (el) el.addEventListener('change', run); });
+    run();
+  }
+
+  // dodanie do planu: dowolny dzień (do 30 dni naprzód) i godzina; fromCard = wróć do karty klientki po zapisie
+  const whenName = (d) => d === Rules.dayPL(0) ? 'dziś' : d === Rules.dayPL(1) ? 'jutro' : dateLabel(d);
+  function openPlanAdd(c, day, service, fromCard) {
+    if (!c) return;
+    openSheet(`${bar('Dodaj do planu')}
+      <p class="lead" style="margin-top:-8px">${esc(c.name)}</p>
+      <form class="panel" id="paForm" novalidate>
+        <div class="split" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+          <div class="field"><label for="paDay">Dzień</label><input class="input" id="paDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${esc(day)}" style="min-width:0;width:100%"></div>
+          <div class="field"><label for="paTime">Godzina</label><input class="input" id="paTime" type="time" step="900" style="min-width:0;width:100%"></div>
+        </div>
+        <span class="small" id="paWhen" style="margin-top:-4px"></span>
+        <div class="field"><label for="paSvc">Rytuał</label><select class="input" id="paSvc"><option value="">— wybierz (opcjonalnie) —</option>${svcOptions(service)}</select></div>
+        <p class="error" id="paWarn" role="status" hidden style="margin:0"></p>
+        <p class="error" id="paErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="paSave">Dodaj do planu</button>
+      </form>`);
+    if (fromCard) {
+      const back = sheetIn.querySelector('[data-close]'), fresh = back.cloneNode(true);
+      back.replaceWith(fresh); fresh.addEventListener('click', () => renderCard());
+    }
+    const t = $('#paTime'), d = $('#paDay');
+    const label = () => {
+      const ok = d.value && d.value >= Rules.dayPL(0) && d.value <= Rules.dayPL(PLAN_AHEAD);
+      $('#paWhen').textContent = ok ? whenName(d.value).replace(/^./, (ch) => ch.toUpperCase()) + (t.value ? ', ' + t.value : ', bez godziny') : 'Wybierz dzień od dziś do ' + PLAN_AHEAD + ' dni naprzód.';
+      $('#paSave').textContent = t.value ? 'Dodaj na ' + t.value : 'Dodaj bez godziny';
+    };
+    [t, d].forEach((el) => { el.addEventListener('input', label); el.addEventListener('change', label); });
+    label();
+    timeWarn(() => d.value, '#paTime', '#paSvc', '#paWarn', null, ['#paDay']);
+    $('#paForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#paErr');
+      if (!d.value || d.value < Rules.dayPL(0) || d.value > Rules.dayPL(PLAN_AHEAD)) { err.textContent = 'Wybierz dzień od dziś do ' + PLAN_AHEAD + ' dni naprzód.'; err.hidden = false; return; }
+      const btn = $('#paSave'); btn.disabled = true;
+      try {
+        await Api.planAdd(c.id, $('#paSvc').value, d.value, t.value);
+        const msg = 'Dodano do planu: ' + whenName(d.value) + (t.value ? ', ' + t.value : '') + '.';
+        if (fromCard) renderCard(); else closeSheet();
+        toast(msg);
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    });
+  }
+
+  // ustawienie albo zmiana godziny wizyty dodanej ręcznie
+  function openPlanTime(p) {
+    if (!p) return;
+    const cur = p.start_at ? new Date(p.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
+    openSheet(`${bar('Godzina wizyty')}
+      <p class="lead" style="margin-top:-8px">${esc(p.name)} · ${esc(dateLabel(p.day || planTarget()))}${p.service ? ' · ' + esc(p.service) : ''}</p>
+      <form class="panel" id="ptForm" novalidate>
+        <div class="field"><label for="ptTime">Godzina</label><input class="input" id="ptTime" type="time" step="900" value="${esc(cur)}" style="min-width:0;width:100%"></div>
+        <p class="error" id="ptWarn" role="status" hidden style="margin:0"></p>
+        <p class="small" style="margin:0">Poprawka godziny nie wysyła klientkom oferty wolnego terminu. Jeśli zwolni się okienko, zobaczysz je w „Wolne godziny”.</p>
+        <p class="error" id="ptErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="ptSave">Zapisz godzinę</button>
+        ${cur ? '<button class="btn btn--ghost btn--sm" type="button" id="ptClear">Usuń godzinę</button>' : ''}
+      </form>`);
+    timeWarn(p.day || planTarget(), '#ptTime', null, '#ptWarn', p.name);
+    const save = async (time) => {
+      if (time === undefined) { time = $('#ptTime').value; if (!time) { const el = $('#ptErr'); el.textContent = 'Wpisz godzinę.'; el.hidden = false; return; } }
+      try {
+        await Api.planSetTime(p.id, time || null);
+        closeSheet();
+        toast(time ? 'Godzina wizyty: ' + time + '.' : 'Usunięto godzinę wizyty.');
+      } catch (ex) { const el = $('#ptErr'); el.textContent = ex.message; el.hidden = false; }
+    };
+    $('#ptForm').addEventListener('submit', (e) => { e.preventDefault(); save(); });
+    const cl = $('#ptClear'); if (cl) cl.addEventListener('click', () => save(''));
   }
 
   // ---------- okno ----------
@@ -699,6 +814,7 @@
         ${currentPlan ? '' : '<button class="btn btn--ghost" data-plan-btn="0">+ Plan dziś</button>'}
         <button class="btn btn--ghost" data-plan-btn="1">+ Plan jutro</button>
       </div>
+      <button class="btn btn--ghost" data-plan-btn="2" style="margin-top:-6px">+ Plan · inny dzień i godzina</button>
       <section class="panel">
         <span class="eyebrow">Karta w telefonie klientki</span>
         <p class="small" style="margin:0">${!hasApp(c) ? 'Klientka nie ma jeszcze aplikacji. Wyślij jej SMS z linkiem: gdy go otworzy, karta połączy się z aplikacją razem ze wszystkimi pieczątkami.' : 'Link przyda się, gdy klientka zmieni telefon albo usunie aplikację.'}</p>
@@ -739,9 +855,9 @@
     on('#bdayBtn', async () => {
       try { current = await Api.useBirthday(c.id, svc(), currentPlan); current = (await Api.getCard(c.id).catch(() => null)) || current; currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); if (c.referred_by_name && !(c.visits || []).length) refReward(c); } catch (e) { fail(e); }
     });
-    document.querySelectorAll('[data-plan-btn]').forEach((b) => b.addEventListener('click', async () => {
+    document.querySelectorAll('[data-plan-btn]').forEach((b) => b.addEventListener('click', () => {
       const o = +b.dataset.planBtn;
-      try { await Api.planAdd(c.id, svc(), Rules.dayPL(o)); toast('Dodano do planu na ' + DAY_NAME[o] + '.'); } catch (e) { fail(e); }
+      openPlanAdd(c, o === 2 ? Rules.dayPL(2) : Rules.dayPL(o), svc(), true);
     }));
     on('#editBtn', () => openEdit());
     on('#delBtn', async () => {
