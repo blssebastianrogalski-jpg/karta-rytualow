@@ -437,7 +437,7 @@
       ${next}
       ${reqBox}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
-      <button class="btn btn--line" id="reqBtn">Nie masz Booksy? Poproś o termin</button>
+      <button class="btn btn--line btn--two" id="reqBtn"><span>Poproś o termin bez Booksy</span><small>Nie masz Booksy albo wolisz z niego nie korzystać? Kliknij tutaj, a ja odezwę się z terminem.</small></button>
       ${wallet}
       ${tiles}
       ${install}
