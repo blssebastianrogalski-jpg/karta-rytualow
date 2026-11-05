@@ -89,6 +89,8 @@ h2 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 21px; li
 .btn--paper { background: var(--paper); color: var(--bg); }
 .btn--danger { background: transparent; border-color: #6B3A30; color: var(--danger); }
 .btn--sm { min-height: 44px; font-size: 12.5px; padding: 0 14px; width: auto; }
+.btn--two { flex-direction: column; gap: 4px; padding: 12px 18px; }
+.btn--two small { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; line-height: 1.4; color: var(--text-2); }
 .btn[disabled] { opacity: .5; cursor: default; }
 .btn-row { display: flex; gap: 8px; }
 .btn-row > * { flex: 1; }
