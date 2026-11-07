@@ -29,6 +29,7 @@
   const CONSENT_ASK = 'Zgoda na powiadomienia i SMS nie jest zaznaczona. Bez niej nie mogę przypomnieć Ci o wizycie, ofertach specjalnych ani o prezencie urodzinowym −20%. Zaznaczyć zgodę?';
   const CONSENT_KEY = 'tctd.consentAsked';
   let myConsent = null;    // zgoda na SMS i oferty (null = jeszcze nie wiem)
+  let myReview = null;     // opinia w Google: { done, clicked } (null = jeszcze nie wiem)
   const pushSupported = () => !!CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
   const VISIT_LABEL = {
@@ -379,6 +380,7 @@
   // ---------- karta ----------
   function renderCard(animate) {
     loadConsent();
+    loadReview();
     const p = UI.progressText(card.stamps);
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -407,7 +409,7 @@
     const reqBox = requestsBox();
     const lastVisit = visits[0];
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
-    const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
+    const review = CFG.GOOGLE_REVIEW_URL && recentVisit && !(myReview && myReview.done) ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${myReview && myReview.clicked ? '<button class="btn btn--ghost btn--sm" id="reviewDoneBtn">Już wystawiłam opinię</button>' : ''}</section>` : '';
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
@@ -450,6 +452,10 @@
       <p class="small center">Numer karty: <span class="strong">${esc(card.code)}</span>. Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
       <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
     $('#forgetBtn').addEventListener('click', forgetCard);
+    const rg = $('#reviewGo');
+    if (rg) rg.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'clicked').then((r) => { myReview = r; setTimeout(render, 800); }).catch(() => {}); });
+    const rd = $('#reviewDoneBtn');
+    if (rd) rd.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'done').then((r) => { myReview = r; UI.toast('Dziękuję za opinię!'); render(); }).catch(() => UI.toast('Nie udało się zapisać. Spróbuj za chwilę.')); });
     const qc = $('#qConsent');
     if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
     const ib = $('#installBtn');
@@ -762,6 +768,10 @@
   function loadConsent() {
     if (myConsent !== null || !CardStore.get()) return;
     Api.myConsent(CardStore.get()).then((ok) => { myConsent = !!ok; if (screen === 'card' || screen === 'promo') render(); }).catch(() => {});
+  }
+  function loadReview() {
+    if (myReview !== null || !CardStore.get()) return;
+    Api.myReview(CardStore.get()).then((r) => { myReview = r || { done: false, clicked: false }; if (screen === 'card') render(); }).catch(() => {});
   }
   async function answerConsent(ok) {
     try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
