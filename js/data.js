@@ -424,6 +424,34 @@
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
+      // zmiana wizyty w panelu (jak zmiana-wizyty.sql)
+      planMove: (p, day, time, service, sms) => run(() => {
+        guard();
+        const db = load();
+        const x = (db.plan || []).find((y) => y.id === p.id);
+        if (!x) throw new Error('Tej wizyty już nie ma w planie. Odśwież panel.');
+        if (x.booking_id) throw new Error('Wizytę z Booksy przesuń w Booksy, plan zaktualizuje się sam.');
+        if (x.status !== 'planned') throw new Error('Ta wizyta jest już zapisana.');
+        if (!day) throw new Error('Wybierz dzień.');
+        if (day < Rules.dayPL(0)) throw new Error('Ten dzień już minął.');
+        if (day > Rules.dayPL(30)) throw new Error('Plan można ułożyć najwyżej 30 dni naprzód.');
+        if (day !== x.day && db.plan.some((y) => y.card_id === x.card_id && y.day === day && y.status === 'planned' && y.id !== x.id)) throw new Error('Ta klientka ma już wizytę w tym dniu.');
+        x.day = day; x.start_at = time ? new Date(day + 'T' + time).toISOString() : null; if (service) x.service = service;
+        save(db);
+        const c = db.cards.find((y) => y.id === x.card_id);
+        return { day, start_at: x.start_at, sms: !!(sms && c && c.phone) };
+      }),
+      planCancel: (planId, reason, sms) => run(() => {
+        guard();
+        const db = load();
+        const x = (db.plan || []).find((y) => y.id === planId);
+        if (!x) return { sms: false };
+        if (x.status !== 'planned') throw new Error('Ta wizyta jest już zapisana, więc nie można jej usunąć z planu.');
+        (db.requests || []).forEach((r) => { if (r.plan_id === x.id && r.status === 'confirmed') Object.assign(r, { status: 'cancelled', reply: 'Odwołana przez studio', handled_at: new Date().toISOString() }); });
+        db.plan = db.plan.filter((y) => y !== x); save(db);
+        const c = db.cards.find((y) => y.id === x.card_id);
+        return { sms: !!(sms && c && c.phone) };
+      }),
       // prośby o termin (jak prosby-o-termin.sql i prosby-konflikty.sql)
       requestCreate: (token, f) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
@@ -795,6 +823,9 @@
       }
       return data;
     };
+    // funkcji jeszcze nie ma w bazie (nowy plik SQL nieuruchomiony)
+    const noFn = (e) => /could not find the function|schema cache/i.test(e.message || '');
+    const NEW_SQL = 'Ta zmiana zadziała po uruchomieniu w Supabase pliku zmiana-wizyty.sql.';
     const invoke = async (fn, body) => {
       const { data, error } = await sb.functions.invoke(fn, { body });
       if (error) {
@@ -879,6 +910,23 @@
       planSetTime: (planId, time) => rpc('plan_set_time', { p_plan_id: planId, p_time: time || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
+      // zmiana wizyty (zmiana-wizyty.sql); bez tego SQL działa tylko to, co było wcześniej
+      planMove: async (p, day, time, service, sms) => {
+        try { return await rpc('plan_move', { p_plan_id: p.id, p_day: day, p_time: time || null, p_service: service || null, p_sms: !!sms }); } catch (e) {
+          if (!noFn(e)) throw e;
+          if (day !== p.day || sms || (service && service !== p.service)) throw new Error(NEW_SQL);
+          await rpc('plan_set_time', { p_plan_id: p.id, p_time: time || null });
+          return { day, sms: false };
+        }
+      },
+      planCancel: async (planId, reason, sms) => {
+        try { return await rpc('plan_cancel', { p_plan_id: planId, p_reason: reason, p_sms: !!sms }); } catch (e) {
+          if (!noFn(e)) throw e;
+          if (sms || reason === 'mistake') throw new Error(NEW_SQL);
+          await rpc('plan_remove', { p_plan_id: planId });
+          return { sms: false };
+        }
+      },
       requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {}, f.moveOf ? { p_move_of: f.moveOf } : {})),
       visitCancel: (token, planId) => rpc('visit_cancel', { p_token: token, p_plan_id: planId }),
       requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
