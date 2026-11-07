@@ -38,7 +38,8 @@
     package_visit: 'Wizyta z pakietu',
     birthday: 'Rytuał urodzinowy −20%',
     referral: 'Pieczątka za polecenie',
-    gap: 'Dodatkowa pieczątka za wolny termin'
+    gap: 'Dodatkowa pieczątka za wolny termin',
+    review: 'Pieczątka za opinię'
   };
 
   // kod polecającej z linku …/?p=KOD (czeka, aż koleżanka założy kartę)
@@ -407,9 +408,9 @@
         ${viaBooksy ? `<a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">${viaBooksy < upcoming.length ? 'Zmień lub odwołaj wizytę z Booksy' : 'Zmień lub odwołaj w Booksy'}</a>` : ''}
       </section>` : '';
     const reqBox = requestsBox();
-    const lastVisit = visits[0];
+    const lastVisit = visits.find((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind));
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
-    const review = CFG.GOOGLE_REVIEW_URL && recentVisit && !(myReview && myReview.done) ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${myReview && myReview.clicked ? '<button class="btn btn--ghost btn--sm" id="reviewDoneBtn">Już wystawiłam opinię</button>' : ''}</section>` : '';
+    const review = CFG.GOOGLE_REVIEW_URL && recentVisit && !(myReview && myReview.done) ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.${myReview && myReview.stamp ? ' Za opinię dopiszę Ci pieczątkę na karcie.' : ''}</span><a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${myReview && myReview.clicked ? `<button class="btn btn--line btn--sm" id="reviewDoneBtn">Już wystawiłam opinię${myReview.stamp ? ' (+1 pieczątka)' : ''}</button>` : ''}</section>` : '';
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
@@ -455,7 +456,7 @@
     const rg = $('#reviewGo');
     if (rg) rg.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'clicked').then((r) => { myReview = r; setTimeout(render, 800); }).catch(() => {}); });
     const rd = $('#reviewDoneBtn');
-    if (rd) rd.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'done').then((r) => { myReview = r; UI.toast('Dziękuję za opinię!'); render(); }).catch(() => UI.toast('Nie udało się zapisać. Spróbuj za chwilę.')); });
+    if (rd) rd.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'done').then(async (r) => { const st = myReview && myReview.stamp; myReview = r; try { card = (await Api.getMyCard(CardStore.get())) || card; } catch (e2) { /* zostaje stara karta */ } UI.toast(st ? 'Dziękuję za opinię! Pieczątka dopisana.' : 'Dziękuję za opinię!'); render(); }).catch(() => UI.toast('Nie udało się zapisać. Spróbuj za chwilę.')); });
     const qc = $('#qConsent');
     if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
     const ib = $('#installBtn');
@@ -771,7 +772,7 @@
   }
   function loadReview() {
     if (myReview !== null || !CardStore.get()) return;
-    Api.myReview(CardStore.get()).then((r) => { myReview = r || { done: false, clicked: false }; if (screen === 'card') render(); }).catch(() => {});
+    Api.myReview(CardStore.get()).then((r) => { myReview = r || { done: false, clicked: false, stamp: false }; if (screen === 'card') render(); }).catch(() => {});
   }
   async function answerConsent(ok) {
     try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }

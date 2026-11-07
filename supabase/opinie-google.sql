@@ -4,6 +4,8 @@
 --     i nie kliknęła w karcie „Zostaw opinię w Google”.
 --  Klientka, która ma oznaczoną opinię (sama na karcie albo ja w panelu), nie dostaje już próśb.
 --  Najwyżej jedna prośba na 30 dni, żeby stałe klientki nie dostawały jej po każdej wizycie.
+--  3) Test: +1 pieczątka za opinię (raz na klientkę). Włącznik w panelu (Wolne terminy → ustawienia) albo:
+--     update public.booking_settings set review_stamp = false where id = 1;
 --  Zastępuje dawne przypomnienia (dzień po wizycie i po 7 dniach).
 -- Wymaga wcześniejszych urodziny-przypomnienia-i-zyczenia.sql i cisza-nocna-i-polskie-numery.sql.
 -- Uruchom w Supabase → SQL Editor (można ponownie). Nie kasuje danych klientek.
@@ -12,18 +14,91 @@
 alter table public.cards add column if not exists review_done_at timestamptz;     -- oznaczyła: wystawiłam opinię
 alter table public.cards add column if not exists review_clicked_at timestamptz;  -- ostatnie kliknięcie „Zostaw opinię w Google”
 
+-- ---------- Pieczątka za opinię (test, z włącznikiem) ----------
+alter table public.booking_settings add column if not exists review_stamp boolean not null default true;
+alter table public.cards add column if not exists review_stamp_at timestamptz;   -- kiedy dostała pieczątkę za opinię
+
+-- nowy rodzaj wpisu w historii: pieczątka za opinię
+do $$
+declare r record;
+begin
+  for r in select conname from pg_constraint
+           where conrelid = 'public.visits'::regclass and contype = 'c' and pg_get_constraintdef(oid) like '%kind%'
+  loop
+    execute format('alter table public.visits drop constraint %I', r.conname);
+  end loop;
+end $$;
+alter table public.visits add constraint visits_kind_check
+  check (kind in ('stamp', 'package_buy', 'package_visit', 'birthday', 'referral', 'gap', 'review'));
+
+-- pieczątka za opinię nie jest wizytą: nie nagradza polecającej
+create or replace function public.visits_ref_reward() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare ref uuid;
+begin
+  if new.kind in ('referral', 'review') then return new; end if;
+  update public.cards set ref_rewarded_at = now()
+   where id = new.card_id and referred_by is not null and ref_rewarded_at is null
+  returning referred_by into ref;
+  if ref is not null then
+    update public.cards set bonus_stamps = bonus_stamps + 1 where id = ref;
+    perform public.apply_bonus_stamps(ref);
+  end if;
+  perform public.apply_bonus_stamps(new.card_id);
+  return new;
+end $$;
+
+-- Raz na klientkę, gdy włącznik jest włączony. Nie wypełnia 5. ani 10. kratki (tam jest rabat za wizytę):
+-- wtedy pieczątka czeka i dopisze się przy najbliższej wizycie.
+create or replace function public.review_give_stamp(p_id uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare c public.cards;
+begin
+  if not coalesce((select review_stamp from public.booking_settings where id = 1), false) then return false; end if;
+  select * into c from public.cards where id = p_id for update;
+  if not found or c.review_stamp_at is not null then return false; end if;
+  if c.stamps < 10 and c.stamps not in (4, 9) then
+    update public.cards set stamps = stamps + 1, review_stamp_at = now() where id = c.id;
+    insert into public.visits (card_id, kind) values (c.id, 'review');
+  else
+    update public.cards set bonus_stamps = bonus_stamps + 1, review_stamp_at = now() where id = c.id;
+  end if;
+  return true;
+end $$;
+revoke execute on function public.review_give_stamp(uuid) from public, anon, authenticated;
+
+-- Panel: włącznik pieczątki za opinię
+create or replace function public.review_stamp_get() returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.staff_check();
+  return coalesce((select review_stamp from public.booking_settings where id = 1), false);
+end $$;
+create or replace function public.review_stamp_set(p_on boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.staff_check();
+  update public.booking_settings set review_stamp = coalesce(p_on, false) where id = 1;
+  return coalesce(p_on, false);
+end $$;
+revoke all on function public.review_stamp_get(), public.review_stamp_set(boolean) from public, anon;
+grant execute on function public.review_stamp_get(), public.review_stamp_set(boolean) to authenticated;
+
 -- Klientka (po kluczu karty): stan i oznaczenie. p_what: 'clicked' albo 'done'.
 create or replace function public.my_review(p_token text)
 returns json language sql stable security definer set search_path = public as $$
-  select json_build_object('done', review_done_at is not null, 'clicked', review_clicked_at is not null)
+  select json_build_object('done', review_done_at is not null, 'clicked', review_clicked_at is not null,
+    'stamp', review_stamp_at is null and coalesce((select review_stamp from public.booking_settings where id = 1), false))
   from public.cards where token = p_token
 $$;
 
 create or replace function public.mark_my_review(p_token text, p_what text)
 returns json language plpgsql security definer set search_path = public as $$
+declare cid uuid;
 begin
   if p_what = 'done' then
-    update public.cards set review_done_at = coalesce(review_done_at, now()) where token = p_token;
+    update public.cards set review_done_at = coalesce(review_done_at, now()) where token = p_token returning id into cid;
+    if cid is not null then perform public.review_give_stamp(cid); end if;
   elsif p_what = 'clicked' then
     update public.cards set review_clicked_at = now() where token = p_token;
   else
@@ -49,6 +124,7 @@ begin
   update public.cards
      set review_done_at = case when coalesce(p_done, false) then coalesce(review_done_at, now()) else null end
    where id = p_id;
+  if coalesce(p_done, false) then perform public.review_give_stamp(p_id); end if;
   return coalesce(p_done, false);
 end $$;
 revoke all on function public.review_get(uuid), public.review_set(uuid, boolean) from public, anon;
@@ -126,7 +202,8 @@ begin
     from public.cards k
     where k.review_done_at is null
       and (exists (select 1 from public.visits v
-                    where v.card_id = k.id and (v.created_at at time zone 'Europe/Warsaw')::date = today)
+                    where v.card_id = k.id and v.kind in ('stamp', 'package_buy', 'package_visit', 'birthday')
+                      and (v.created_at at time zone 'Europe/Warsaw')::date = today)
         or exists (select 1 from public.day_plan p
                     where p.card_id = k.id and p.day = today and p.status <> 'skipped'
                       and (p.status <> 'planned' or p.start_at <= p_at)))

@@ -532,6 +532,8 @@
       gapSmsMark: (offerId, cardId) => run(() => { guard(); const db = load(); db.gapSmsDone = db.gapSmsDone || {}; (db.gapSmsDone[offerId] = db.gapSmsDone[offerId] || []).push(cardId); save(db); }),
       gapSmsAutoGet: () => run(() => { guard(); return load().gapSmsAuto !== false; }),
       gapSmsAutoSet: (on) => run(() => { guard(); const db = load(); db.gapSmsAuto = !!on; save(db); return !!on; }),
+      reviewStampGet: () => run(() => { guard(); return load().reviewStamp !== false; }),
+      reviewStampSet: (on) => run(() => { guard(); const db = load(); db.reviewStamp = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
       gapList: () => run(() => {
@@ -903,6 +905,8 @@
       gapSmsMark: (offerId, cardId) => rpc('gap_sms_mark', { p_offer: offerId, p_card: cardId }),
       gapSmsAutoGet: () => rpc('gap_sms_auto_get', {}),
       gapSmsAutoSet: (on) => rpc('gap_sms_auto_set', { p_on: !!on }),
+      reviewStampGet: () => rpc('review_stamp_get', {}),
+      reviewStampSet: (on) => rpc('review_stamp_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
