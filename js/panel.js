@@ -94,6 +94,7 @@
     main.innerHTML = `
       ${tabsHtml()}
       <h1>Panel studia</h1>
+      <div id="pushLog"></div>
       <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       <div id="smsAlert"></div>
@@ -146,6 +147,7 @@
     });
     $('#absAddBtn').addEventListener('click', openAbsenceAdd);
     loadOwnerPush();
+    loadPushLog();
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
     Promise.all([loadRefs(), loadAbsences()]).then(loadPlan);
     loadList();
@@ -550,6 +552,55 @@
     if (sb) sb.addEventListener('click', () => { try { localStorage.setItem(REF_SEEN, refs[0].created_at); } catch (e) { /* ignore */ } loadRefs(); });
   }
 
+  // Kropka na ikonie aplikacji = powiadomienie, które wciąż wisi na pasku telefonu.
+  // Po wejściu do panelu pokazujemy, czego dotyczyło, i zdejmujemy je z paska (kropka znika).
+  const PUSH_SEEN = 'tctd.pushSeen';
+  const pushTime = (iso) => {
+    const d = new Date(iso), t = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    const day = d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Warsaw' });
+    return day === Rules.dayPL(0) ? 'dziś ' + t : day === Rules.dayPL(-1) ? 'wczoraj ' + t : d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' }) + ' ' + t;
+  };
+  async function readPushLog() {
+    try {
+      const c = await caches.open('powiadomienia');
+      const r = await c.match('dziennik.json');
+      return r ? await r.json() : [];
+    } catch (e) { return []; }
+  }
+  async function loadPushLog() {
+    const box = $('#pushLog');
+    if (!box || !('serviceWorker' in navigator)) return;
+    let reg = null, shown = [];
+    try { reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 3000))]); } catch (e) { reg = null; }
+    try { shown = reg && reg.getNotifications ? await reg.getNotifications() : []; } catch (e) { shown = []; }
+    const log = await readPushLog();
+    let seen = '';
+    try { seen = localStorage.getItem(PUSH_SEEN) || ''; } catch (e) { /* ignore */ }
+    const fresh = log.filter((n) => !seen || n.at > seen);
+    // powiadomienia z paska, które przyszły jeszcze przed tą wersją (bez wpisu w dzienniku)
+    shown.forEach((n) => {
+      if (!fresh.some((f) => f.title === n.title && f.body === n.body)) fresh.push({ title: n.title, body: n.body, at: new Date(n.timestamp || Date.now()).toISOString() });
+    });
+    fresh.sort((a, b) => (a.at < b.at ? 1 : -1));
+    // treść jest już w panelu, więc zdejmujemy powiadomienia z paska i kropkę z ikony
+    shown.forEach((n) => { try { n.close(); } catch (e) { /* ignore */ } });
+    try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (e) { /* ignore */ }
+    if (!document.body.contains(box)) return;
+    if (!fresh.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="panel panel--gold" style="padding:14px 16px;gap:10px">
+      <span class="eyebrow eyebrow--gold">${fresh.length === 1 ? 'Nowe powiadomienie' : 'Nowe powiadomienia: ' + fresh.length}</span>
+      ${fresh.slice(0, 10).map((n) => `<div style="display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--line-soft);padding-bottom:8px">
+        <span><b>${esc(n.title || 'Powiadomienie')}</b> <span class="small">· ${esc(pushTime(n.at))}</span></span>
+        ${n.body ? `<span class="small" style="color:var(--text-2);white-space:pre-line">${esc(n.body)}</span>` : ''}
+      </div>`).join('')}
+      <button class="btn btn--line btn--sm" id="pushSeenBtn">OK, widzę</button>
+    </div>`;
+    $('#pushSeenBtn').addEventListener('click', () => {
+      try { localStorage.setItem(PUSH_SEEN, new Date().toISOString()); } catch (e) { /* ignore */ }
+      box.innerHTML = '';
+    });
+  }
+
   // Powiadomienia dla studia na tym telefonie: włącza się raz, nie codziennie (sekcja na dole panelu).
   async function loadOwnerPush() {
     const box = $('#ownerPushBox');
@@ -567,6 +618,11 @@
         : perm === 'denied' ? 'Zablokowane w ustawieniach telefonu dla tej strony. Odblokuj powiadomienia w ustawieniach przeglądarki, a potem wróć tutaj.'
         : 'Wyłączone na tym telefonie. Włącz raz, a telefon będzie dostawał wieczorny przegląd jutrzejszego dnia i urodzin oraz nowe prośby o termin.'}</span>
       ${perm === 'denied' ? '' : `<button class="btn btn--line btn--sm" id="ownerPushBtn" style="align-self:flex-start">${on ? 'Włącz ponownie (gdyby nie przychodziły)' : 'Włącz powiadomienia'}</button>`}`;
+    const log = await readPushLog();
+    if (log.length && document.body.contains(box)) box.insertAdjacentHTML('beforeend', `<details style="margin-top:4px">
+      <summary class="small" style="cursor:pointer">Historia powiadomień na tym telefonie (${log.length})</summary>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${log.map((n) => `<div style="display:flex;flex-direction:column;gap:2px"><span class="small"><b>${esc(n.title || 'Powiadomienie')}</b> · ${esc(pushTime(n.at))}</span>${n.body ? `<span class="small" style="color:var(--text-2);white-space:pre-line">${esc(n.body)}</span>` : ''}</div>`).join('')}</div>
+    </details>`);
     const b = $('#ownerPushBtn');
     if (b) b.addEventListener('click', enableOwnerPush);
   }
