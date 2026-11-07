@@ -112,7 +112,7 @@
           <input class="input" id="planDate" type="date" min="${Rules.dayPL(2)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${planMoreDay || Rules.dayPL(2)}" style="background:var(--surface)">
         </div>
         <div id="plan"><div class="spinner"></div></div>
-        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej, i od razu ustawisz godzinę. „Ustaw godzinę” pod wizytą zmienia godzinę, „×” usuwa odwołaną wizytę.</p>
+        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej, i od razu ustawisz godzinę. „Przesuń lub usuń wizytę” pod nazwiskiem zmienia dzień, godzinę albo rytuał, a „×” usuwa wizytę z planu. Wizyty z Booksy przesuwasz w Booksy.</p>
       </section>
       <div id="gaps"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
@@ -640,7 +640,7 @@
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : done || p.booking_id ? '' : 'bez godziny · ') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
-      const timeLink = done || p.booking_id ? '' : `<button class="linkbtn" data-plan-time="${esc(p.id)}" style="flex-basis:100%;text-align:left;min-height:34px;padding:0 6px 4px 58px;font-size:13.5px">${p.start_at ? 'Zmień godzinę' : 'Ustaw godzinę wizyty'}</button>`;
+      const timeLink = done ? '' : `<button class="linkbtn" data-plan-edit="${esc(p.id)}" style="flex-basis:100%;text-align:left;min-height:34px;padding:0 6px 4px 58px;font-size:13.5px">${p.booking_id ? 'Usuń z planu' : p.start_at ? 'Przesuń lub usuń wizytę' : 'Ustaw godzinę, przesuń lub usuń'}</button>`;
       return `<div class="client" style="flex-wrap:wrap;row-gap:0">
         <button class="client__main" ${target} style="${done ? 'opacity:.6' : ''}">
           <span class="avatar" style="${done ? 'background:var(--gold);color:var(--on-gold);border-color:var(--gold)' : ''}">${done ? '✓' : esc(UI.initials(p.name))}</span>
@@ -665,14 +665,13 @@
     }
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
     box.querySelectorAll('[data-integr]').forEach((b) => b.addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); }));
-    box.querySelectorAll('[data-plan-time]').forEach((b) => b.addEventListener('click', () => openPlanTime(plan.find((x) => String(x.id) === b.dataset.planTime))));
-    // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
-    box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', async () => {
-      const p = plan.find((x) => String(x.id) === b.dataset.planDel);
-      const when = day < 2 ? DAY_NAME[day] : dateLabel(p.day);
-      if (!(await UI.ask('Usunąć ' + p.name + ' z planu na ' + when + '? Karta i pieczątki zostaną bez zmian.' + (p.booking_id ? ' Rezerwację w Booksy odwołaj w Booksy.' : ''), 'Usuń z planu'))) return;
-      try { await Api.planRemove(p.id); toast('Usunięto z planu.'); loadPlan(); } catch (e) { fail(e); }
+    const pick = (id) => { const p = plan.find((x) => String(x.id) === id); if (p && !p.day) p.day = Rules.dayPL(day); return p; };
+    box.querySelectorAll('[data-plan-edit]').forEach((b) => b.addEventListener('click', () => {
+      const p = pick(b.dataset.planEdit);
+      if (p && p.booking_id) openPlanCancel(p); else openPlanEdit(p);
     }));
+    // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
+    box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', () => openPlanCancel(pick(b.dataset.planDel))));
   }
 
   // kto ma kartę w aplikacji (otwartą z ikony); null = baza jeszcze bez tej funkcji, wtedy jak dawniej
@@ -776,31 +775,81 @@
     });
   }
 
-  // ustawienie albo zmiana godziny wizyty dodanej ręcznie
-  function openPlanTime(p) {
+  // zmiana wizyty dodanej w aplikacji: inny dzień, godzina, rytuał; stąd też usunięcie z planu
+  function openPlanEdit(p) {
     if (!p) return;
     const cur = p.start_at ? new Date(p.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
-    openSheet(`${bar('Godzina wizyty')}
-      <p class="lead" style="margin-top:-8px">${esc(p.name)} · ${esc(dateLabel(p.day || planTarget()))}${p.service ? ' · ' + esc(p.service) : ''}</p>
-      <form class="panel" id="ptForm" novalidate>
-        <div class="field"><label for="ptTime">Godzina</label><input class="input" id="ptTime" type="time" step="900" value="${esc(cur)}" style="min-width:0;width:100%"></div>
-        <p class="error" id="ptWarn" role="status" hidden style="margin:0"></p>
-        <p class="small" style="margin:0">Poprawka godziny nie wysyła klientkom oferty wolnego terminu. Jeśli zwolni się okienko, zobaczysz je w „Wolne godziny”.</p>
-        <p class="error" id="ptErr" role="alert" hidden></p>
-        <button class="btn btn--gold" type="submit" id="ptSave">Zapisz godzinę</button>
-        ${cur ? '<button class="btn btn--ghost btn--sm" type="button" id="ptClear">Usuń godzinę</button>' : ''}
-      </form>`);
-    timeWarn(p.day || planTarget(), '#ptTime', null, '#ptWarn', p.name);
-    const save = async (time) => {
-      if (time === undefined) { time = $('#ptTime').value; if (!time) { const el = $('#ptErr'); el.textContent = 'Wpisz godzinę.'; el.hidden = false; return; } }
-      try {
-        await Api.planSetTime(p.id, time || null);
-        closeSheet();
-        toast(time ? 'Godzina wizyty: ' + time + '.' : 'Usunięto godzinę wizyty.');
-      } catch (ex) { const el = $('#ptErr'); el.textContent = ex.message; el.hidden = false; }
+    const hasSvc = p.service && CFG.SERVICES.indexOf(p.service) >= 0;
+    openSheet(`${bar('Zmień wizytę')}
+      <p class="lead" style="margin-top:-8px">${esc(p.name)}</p>
+      <p class="small" style="margin:-10px 0 4px">Teraz: ${esc(whenName(p.day))}${cur ? ', ' + esc(cur) : ', bez godziny'}${p.service ? ' · ' + esc(p.service) : ''}</p>
+      <form class="panel" id="peForm" novalidate>
+        <div class="split" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+          <div class="field"><label for="peDay">Dzień</label><input class="input" id="peDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${esc(p.day)}" style="min-width:0;width:100%"></div>
+          <div class="field"><label for="peTime">Godzina</label><input class="input" id="peTime" type="time" step="900" value="${esc(cur)}" style="min-width:0;width:100%"></div>
+        </div>
+        <div class="field"><label for="peSvc">Rytuał</label><select class="input" id="peSvc">${hasSvc ? '' : `<option value="">${esc(p.service || '— bez zmian —')}</option>`}${svcOptions(p.service)}</select></div>
+        <p class="error" id="peWarn" role="status" hidden style="margin:0"></p>
+        ${p.card_id ? '<label class="check"><input type="checkbox" id="peSms"> <span>Powiadom klientkę o nowym terminie (SMS i powiadomienie w aplikacji)</span></label>' : ''}
+        <p class="small" style="margin:0">Bez zaznaczenia klientka nic nie dostanie. Zwolnione okienko nie idzie samo do innych klientek; zobaczysz je w „Wolne godziny”. Jeśli wizyta jest też w Booksy, zmień ją również tam.</p>
+        <p class="error" id="peErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="peSave">Zapisz zmianę</button>
+      </form>
+      <div class="panel" style="padding:14px 16px;gap:8px;margin-top:12px">
+        <span class="small">Klientka odwołała albo wizyta trafiła do planu przez pomyłkę?</span>
+        <button class="btn btn--line btn--sm" type="button" id="peDel" style="align-self:flex-start">Usuń z planu</button>
+      </div>`);
+    const d = $('#peDay'), t = $('#peTime');
+    const label = () => {
+      const changed = d.value !== p.day || t.value !== cur;
+      $('#peSave').textContent = !changed ? 'Zapisz zmianę' : 'Przesuń na ' + whenName(d.value || p.day) + (t.value ? ', ' + t.value : '');
     };
-    $('#ptForm').addEventListener('submit', (e) => { e.preventDefault(); save(); });
-    const cl = $('#ptClear'); if (cl) cl.addEventListener('click', () => save(''));
+    [d, t].forEach((el) => { el.addEventListener('input', label); el.addEventListener('change', label); });
+    label();
+    timeWarn(() => d.value, '#peTime', '#peSvc', '#peWarn', p.name, ['#peDay']);
+    $('#peDel').addEventListener('click', () => openPlanCancel(p));
+    $('#peForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#peErr');
+      if (!d.value || d.value < Rules.dayPL(0) || d.value > Rules.dayPL(PLAN_AHEAD)) { err.textContent = 'Wybierz dzień od dziś do ' + PLAN_AHEAD + ' dni naprzód.'; err.hidden = false; return; }
+      const sms = !!($('#peSms') && $('#peSms').checked);
+      const btn = $('#peSave'); btn.disabled = true;
+      try {
+        const r = await Api.planMove(p, d.value, t.value, $('#peSvc').value, sms);
+        closeSheet();
+        toast('Wizyta: ' + whenName(d.value) + (t.value ? ', ' + t.value : ', bez godziny') + '.' + (sms ? (r && r.sms ? ' Klientka dostanie SMS.' : ' Brak numeru telefonu, SMS nie poszedł.') : ''));
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    });
+  }
+
+  // usunięcie z planu: powód (odwołała / pomyłka) i SMS tylko po zaznaczeniu
+  function openPlanCancel(p) {
+    if (!p) return;
+    const cur = p.start_at ? new Date(p.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
+    const future = (p.start_at ? new Date(p.start_at) : new Date(p.day + 'T23:59')) > new Date();
+    openSheet(`${bar('Usuń z planu')}
+      <p class="lead" style="margin-top:-8px">${esc(p.name)}</p>
+      <p class="small" style="margin:-10px 0 4px">${esc(whenName(p.day))}${cur ? ', ' + esc(cur) : ''}${p.service ? ' · ' + esc(p.service) : ''}</p>
+      <form class="panel" id="pcForm" novalidate>
+        <span class="eyebrow">Dlaczego usuwasz?</span>
+        <label class="check"><input type="radio" name="pcWhy" value="client" checked> <span><b>Klientka odwołała.</b> Wolne okienko może trafić do automatu „Wolne terminy”, tak jak przy odwołaniu w aplikacji.</span></label>
+        <label class="check"><input type="radio" name="pcWhy" value="mistake"> <span><b>Pomyłka w planie.</b> Nikt nie dostanie oferty tego okienka.</span></label>
+        ${p.card_id && !p.booking_id && future ? '<label class="check"><input type="checkbox" id="pcSms"> <span>Wyślij klientce SMS, że wizyta jest odwołana (i powiadomienie w aplikacji)</span></label>' : ''}
+        <p class="small" style="margin:0">Karta i pieczątki zostają bez zmian.${p.booking_id ? ' Rezerwację odwołaj też w Booksy, Booksy samo powiadomi klientkę.' : ''}</p>
+        <p class="error" id="pcErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="pcSave">Usuń z planu</button>
+      </form>`);
+    $('#pcForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const why = (sheetIn.querySelector('input[name="pcWhy"]:checked') || {}).value || 'client';
+      const sms = !!($('#pcSms') && $('#pcSms').checked);
+      const btn = $('#pcSave'); btn.disabled = true;
+      try {
+        const r = await Api.planCancel(p.id, why, sms);
+        closeSheet();
+        toast('Usunięto z planu.' + (sms ? (r && r.sms ? ' Klientka dostanie SMS.' : ' Brak numeru telefonu, SMS nie poszedł.') : ''));
+      } catch (ex) { const el = $('#pcErr'); el.textContent = ex.message; el.hidden = false; btn.disabled = false; }
+    });
   }
 
   // ---------- okno ----------
