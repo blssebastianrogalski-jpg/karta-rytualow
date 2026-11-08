@@ -171,7 +171,7 @@
         { id: 2, kind: 'cancel', day: tm, start_at: at('14:00'), end_at: at('15:30'), status: 'open', info: 'odwołała: Ewa Zielińska, Kobido UP®', push_n: 9, sms_n: 14, sent_at: daysAgo(0.02), created_at: daysAgo(0.03) }
       ];
       db.promotions = [
-        { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo poproś o termin w aplikacji.',
+        { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo zapytaj o termin w aplikacji.',
           valid_until: Rules.dayPL(30), pushed: 12, created_at: daysAgo(1) }
       ];
       return db;
@@ -483,7 +483,7 @@
       requestPick: (token, id, start) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
         const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && x.status === 'suggested');
-        if (!r) throw new Error('Ta propozycja jest już nieaktualna. Poproś o termin jeszcze raz.');
+        if (!r) throw new Error('Ta propozycja jest już nieaktualna. Zapytaj o termin jeszcze raz.');
         const d = new Date(start);
         const res = Slots.check(db, d, Slots.minutes(r.service));
         Object.assign(r, { pref_day: Slots.ymd(d), pref_time: Slots.hm(d), pref_part: 'any', status: 'new', attempt: 2, suggestions: null,
