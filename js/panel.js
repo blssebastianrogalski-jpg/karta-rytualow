@@ -1156,13 +1156,13 @@
     openSheet(bar('Wystaw paragon') + `
       <div id="rcResult"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
-        <span class="eyebrow">1 · Rytuał</span>
+        <span class="eyebrow">1 · Rytuał lub zadatek</span>
         <div id="rcList"><div class="spinner"></div></div>
       </section>
       <section id="rcRest" style="display:flex;flex-direction:column;gap:16px" hidden>
         <section style="display:flex;flex-direction:column;gap:10px">
           <span class="eyebrow">2 · Kwota</span>
-          <div class="pay pay--four" role="radiogroup" aria-label="Rabat">${RC_OFF.map(([v, l]) => `<button type="button" role="radio" data-off="${v}" aria-checked="false">${l}</button>`).join('')}</div>
+          <div class="pay pay--four" id="rcOff" role="radiogroup" aria-label="Rabat">${RC_OFF.map(([v, l]) => `<button type="button" role="radio" data-off="${v}" aria-checked="false">${l}</button>`).join('')}</div>
           <div class="field"><label for="rcAmount">Do zapłaty (zł)</label><input class="input" id="rcAmount" inputmode="decimal" autocomplete="off"></div>
           <p class="small" id="rcOffInfo" style="margin:0"></p>
         </section>
@@ -1187,7 +1187,7 @@
         </section>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px">
-        <div class="row"><span class="eyebrow">Ostatnie paragony za rytuały</span><button class="linkbtn" id="rcReload" style="min-height:0;padding:0">Odśwież</button></div>
+        <div class="row"><span class="eyebrow">Ostatnie paragony za rytuały i zadatki</span><button class="linkbtn" id="rcReload" style="min-height:0;padding:0">Odśwież</button></div>
         <div class="panel panel--tight" id="rcHistory"><div class="spinner"></div></div>
       </section>`);
     sheetIn.querySelectorAll('[data-off]').forEach((b) => b.addEventListener('click', () => { rc.off = +b.dataset.off; setRcAmount(); }));
@@ -1211,20 +1211,25 @@
     if (!rituals.length) { box.innerHTML = '<p class="small">Sklep nie zwrócił żadnego rytuału.</p>'; return; }
     box.innerHTML = '<div class="picks" role="radiogroup" aria-label="Rytuał">' + rituals.map((r) => `
       <button type="button" class="pick" role="radio" data-rc="${r.id}" aria-checked="false">
-        <span class="pick__name">${esc(r.name)}</span><span class="pick__price">${zl(r.price)}</span>
+        <span><span class="pick__name">${esc(r.name)}</span>${r.deposit ? '<span class="pick__meta">wpisujesz kwotę zadatku</span>' : ''}</span>
+        <span class="pick__price">${r.deposit ? 'dowolna' : zl(r.price)}</span>
       </button>`).join('') + '</div>';
     box.querySelectorAll('[data-rc]').forEach((b) => b.addEventListener('click', () => {
       const first = !rc.productId;
+      const wasDeposit = !!(rcRitual() || {}).deposit;
       rc.productId = +b.dataset.rc;
-      rc.off = rc.off == null ? 0 : rc.off;
+      const r = rcRitual();
+      if (r.deposit) { rc.off = null; if (!wasDeposit) rc.amount = ''; }
+      else rc.off = rc.off == null || wasDeposit ? 0 : rc.off;
       setRcAmount();
+      if (r.deposit && !first) { const a = $('#rcAmount'); if (a) a.focus(); }
       if (first) { $('#rcRest').hidden = false; $('#rcRest').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     }));
   }
 
   function setRcAmount() {
     const r = rcRitual();
-    if (r && rc.off != null) rc.amount = (Math.round(r.price * (100 - rc.off)) / 100).toFixed(2).replace('.', ',');
+    if (r && !r.deposit && rc.off != null) rc.amount = (Math.round(r.price * (100 - rc.off)) / 100).toFixed(2).replace('.', ',');
     const el = $('#rcAmount'); if (el) el.value = rc.amount;
     updateRc();
   }
@@ -1236,8 +1241,12 @@
     sheetIn.querySelectorAll('[data-rcpay]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.rcpay === rc.payment)));
     const amount = toAmount(rc.amount);
     const t = $('#rcTotal'); if (t) t.textContent = r && amount ? zl(amount) : '—';
+    const dep = !!(r && r.deposit);
+    const offBox = $('#rcOff'); if (offBox) offBox.hidden = dep;
+    const lab = sheetIn.querySelector('label[for="rcAmount"]'); if (lab) lab.textContent = dep ? 'Kwota zadatku (zł)' : 'Do zapłaty (zł)';
     const info = $('#rcOffInfo');
-    if (info) info.textContent = r && amount && amount < r.price ? `Na paragonie: ${r.name} ${zl(r.price)} i rabat ${zl(r.price - amount)}.` : '−15% za 5. rytuał, −20% w urodziny, −30% za 10. rytuał.';
+    if (info) info.textContent = dep ? 'Na paragonie: „' + r.name + '”. Przy rytuale wystawiasz paragon już tylko na resztę kwoty.'
+      : r && amount && amount < r.price ? `Na paragonie: ${r.name} ${zl(r.price)} i rabat ${zl(r.price - amount)}.` : '−15% za 5. rytuał, −20% w urodziny, −30% za 10. rytuał.';
     const box = $('#rcPayInfo');
     if (box) {
       box.hidden = rc.payment !== 'blik_telefon';
@@ -1283,12 +1292,14 @@
     err.hidden = true;
     const amount = toAmount(rc.amount);
     const name = rc.name.trim(), email = rc.email.trim().toLowerCase(), phone = rc.phone.trim();
-    const problem = !r ? 'Wybierz rytuał.' : !(amount >= 1) ? 'Wpisz kwotę.' : amount > r.price ? 'Kwota nie może być wyższa niż cena rytuału (' + zl(r.price) + ').'
+    const problem = !r ? 'Wybierz rytuał lub zadatek.' : !(amount >= 1) ? (r.deposit ? 'Wpisz kwotę zadatku.' : 'Wpisz kwotę.')
+      : r.deposit && r.max && amount > r.max ? 'Zadatek może mieć najwyżej ' + zl(r.max) + '.'
+      : !r.deposit && amount > r.price ? 'Kwota nie może być wyższa niż cena rytuału (' + zl(r.price) + ').'
       : !rc.payment ? 'Wybierz sposób płatności.' : rc.payment === 'blik_telefon' && !rc.transferOk ? 'Zaznacz, że przelew BLIK dotarł na konto.'
       : name.length < 2 ? 'Wpisz imię i nazwisko.' : !EMAIL_RE.test(email) ? 'Wpisz poprawny e-mail, na który przyjdzie e-paragon.' : '';
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     const payLabel = RC_PAY.find((x) => x[0] === rc.payment)[1].toLowerCase();
-    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.name}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
+    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.deposit ? 'Zadatek na poczet rezerwacji terminu' : r.name}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
     const btn = $('#rcIssue');
     btn.disabled = true;
     btn.textContent = 'Wysyłam do sklepu…';
@@ -1350,7 +1361,7 @@
     let list;
     try { list = await Api.ritualReceipts(); } catch (e) { box.innerHTML = '<p class="error" style="padding:12px 0">' + esc(e.message) + '</p>'; return; }
     if (!box.isConnected) return;
-    if (!list.length) { box.innerHTML = '<p class="small" style="padding:12px 0;margin:0">Nie ma jeszcze paragonów za rytuały z panelu.</p>'; return; }
+    if (!list.length) { box.innerHTML = '<p class="small" style="padding:12px 0;margin:0">Nie ma jeszcze paragonów za rytuały i zadatki z panelu.</p>'; return; }
     box.innerHTML = list.map((s) => {
       const d = new Date(s.created_at);
       const when = UI.fmtShort(s.created_at) + ', ' + d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });

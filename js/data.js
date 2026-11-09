@@ -63,7 +63,8 @@
     ['Refleksologia Stóp Premium', 150], ['Masaż relaksacyjny 60 min', 150], ['Masaż relaksacyjny 90 min', 190],
     ['Masaż aromaterapeutyczny 60 min', 180], ['Masaż aromaterapeutyczny 90 min', 230], ['Masaż gorącą świecą', 190],
     ['Masaż głowy, karku i obręczy barkowej', 130], ['Ukojenie dla Żuchwy i Twarzy', 190]
-  ].map(([name, price], i) => ({ id: 201 + i, name, price }));
+  ].map(([name, price], i) => ({ id: 201 + i, name, price }))
+    .concat([{ id: 299, name: 'Zadatek na poczet rezerwacji terminu', price: 0, deposit: true, max: 2000 }]);
 
   // ---------- TRYB DEMO ----------
   // Sprawdzanie wolnych godzin w trybie pokazowym (w bazie robi to prosby-konflikty.sql)
@@ -745,13 +746,15 @@
         guard();
         const r = DEMO_RITUALS.find((x) => x.id === p.product_id);
         if (!r) throw new Error('Wybierz rytuał z listy.');
-        if (!(p.amount >= 1 && p.amount <= r.price)) throw new Error('Kwota musi być od 1 zł do ceny rytuału (' + r.price + ' zł).');
+        if (r.deposit ? !(p.amount >= 1 && p.amount <= r.max) : !(p.amount >= 1 && p.amount <= r.price)) {
+          throw new Error(r.deposit ? 'Zadatek musi być od 1 zł do ' + r.max + ' zł.' : 'Kwota musi być od 1 zł do ceny rytuału (' + r.price + ' zł).');
+        }
         const db = load();
         db.ritualReceipts = db.ritualReceipts || [];
         const prev = db.ritualReceipts.find((x) => x.ref === p.client_ref);
         if (prev) return Object.assign({ duplicate: true }, prev);
         const id = 2000 + db.ritualReceipts.length + 1;
-        const row = { ref: p.client_ref, order_id: id, order_number: String(id), created_at: new Date().toISOString(), service: r.name, total: p.amount,
+        const row = { ref: p.client_ref, order_id: id, order_number: String(id), created_at: new Date().toISOString(), service: r.name, total: p.amount, deposit: !!r.deposit,
           payment: p.payment, name: p.name, email: p.email, receipt: 'queued' };
         db.ritualReceipts.unshift(row);
         save(db);
