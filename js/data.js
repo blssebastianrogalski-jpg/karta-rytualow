@@ -175,6 +175,20 @@
         { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo zapytaj o termin w aplikacji.',
           valid_until: Rules.dayPL(30), pushed: 12, created_at: daysAgo(1) }
       ];
+      // historia odwołań (jak historia-odwolan.sql): Halina 2× nieodbyta wizyta w tym roku, Piotr z Booksy 2 odwołania pod rząd
+      const hal = db.cards[3];
+      db.incidents = [
+        { id: 1, card_id: hal.id, kind: 'late', at: daysAgo(64), source: 'booksy', service: 'Kobido UP®', note: null },
+        { id: 2, card_id: hal.id, kind: 'noshow', at: daysAgo(19), source: 'panel', service: 'Masaż gorącą świecą', note: null },
+        { id: 3, card_id: hal.id, kind: 'cancel', at: daysAgo(150), source: 'manual', service: null, note: 'SMS 2 dni wcześniej' }
+      ];
+      const inThree = new Date(Rules.dayPL(3) + 'T15:30:00').toISOString();
+      db.risks = [
+        { id: 1, card_id: hal.id, name: hal.name, phone: hal.phone, day: Rules.dayPL(3), visit_at: inThree, service: 'Kobido UP®', source: 'booksy', status: 'new',
+          reasons: [{ rule: 'year', n: 2, list: [{ at: daysAgo(64), kind: 'late' }, { at: daysAgo(19), kind: 'noshow' }] }], created_at: daysAgo(0.01) },
+        { id: 2, card_id: null, name: 'Piotr Zając', phone: '603 777 888', day: Rules.dayPL(5), visit_at: new Date(Rules.dayPL(5) + 'T10:00:00').toISOString(), service: 'Head SPA Premium', source: 'booksy', status: 'new',
+          reasons: [{ rule: 'row', list: [{ at: daysAgo(40), kind: 'cancel' }, { at: daysAgo(12), kind: 'late' }] }], created_at: daysAgo(0.2) }
+      ];
       return db;
     }
     function load() {
@@ -449,9 +463,17 @@
         if (!x) return { sms: false };
         if (x.status !== 'planned') throw new Error('Ta wizyta jest już zapisana, więc nie można jej usunąć z planu.');
         (db.requests || []).forEach((r) => { if (r.plan_id === x.id && r.status === 'confirmed') Object.assign(r, { status: 'cancelled', reply: 'Odwołana przez studio', handled_at: new Date().toISOString() }); });
-        db.plan = db.plan.filter((y) => y !== x); save(db);
+        db.plan = db.plan.filter((y) => y !== x);
+        // historia odwołań (jak wyzwalacz day_plan_incident)
+        if (reason !== 'mistake' && x.card_id) {
+          const at = x.start_at || new Date(x.day + 'T09:00:00').toISOString();
+          const kind = reason === 'noshow' ? 'noshow' : new Date(at) - Date.now() < 864e5 ? 'late' : 'cancel';
+          db.incidents = db.incidents || [];
+          db.incidents.push({ id: Date.now(), card_id: x.card_id, kind, at, source: 'panel', service: x.service || null, note: null });
+        }
+        save(db);
         const c = db.cards.find((y) => y.id === x.card_id);
-        return { sms: !!(sms && c && c.phone) };
+        return { sms: !!(sms && reason !== 'noshow' && c && c.phone) };
       }),
       // prośby o termin (jak prosby-o-termin.sql i prosby-konflikty.sql)
       requestCreate: (token, f) => run(() => {
@@ -561,6 +583,43 @@
       gapSmsAutoSet: (on) => run(() => { guard(); const db = load(); db.gapSmsAuto = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
+      // historia odwołań i ostrzeżenia (jak historia-odwolan.sql)
+      riskAlerts: () => run(() => {
+        guard(); const db = load(); const from = Date.now() - 14 * 864e5;
+        return (db.risks || []).filter((a) => a.status === 'new' || new Date(a.handled_at) > from)
+          .sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created_at.localeCompare(a.created_at))
+          .map((a) => { const c = db.cards.find((x) => x.id === a.card_id); return Object.assign({}, a, { name: c ? c.name : a.name }); });
+      }),
+      riskAlertSms: (id, text) => run(() => {
+        guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (!a) throw new Error('Nie ma już tego ostrzeżenia. Odśwież panel.');
+        if (a.status === 'sent') throw new Error('SMS do tej osoby już wyszedł.');
+        const msg = String(text || '').trim();
+        if (msg.length < 10) throw new Error('Wpisz treść SMS-a.');
+        if (msg.length > 459) throw new Error('SMS jest za długi (najwyżej 459 znaków, czyli 3 części).');
+        Object.assign(a, { status: 'sent', sms_text: msg, handled_at: new Date().toISOString() }); save(db);
+        return { phone: a.phone, demo: true };
+      }),
+      riskAlertDismiss: (id) => run(() => { guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id); if (a && a.status === 'new') Object.assign(a, { status: 'dismissed', handled_at: new Date().toISOString() }); save(db); }),
+      incidentsCard: (cardId) => run(() => {
+        guard(); const db = load(); const y = Rules.todayPL().y;
+        const list = (db.incidents || []).filter((i) => i.card_id === cardId).sort((a, b) => b.at.localeCompare(a.at));
+        const bad = list.filter((i) => i.kind !== 'cancel' && new Date(i.at).getFullYear() === y);
+        const c = db.cards.find((x) => x.id === cardId) || { visits: [] };
+        const ev = list.map((i) => ({ at: i.at, x: true })).concat((c.visits || []).map((v) => ({ at: v.created_at, x: false })))
+          .filter((e) => e.x || new Date(e.at) < new Date()).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2);
+        const risk = [];
+        if (bad.length >= 2) risk.push({ rule: 'year', n: bad.length, list: bad.slice().reverse() });
+        if (ev.length === 2 && ev[0].x && ev[1].x) risk.push({ rule: 'row', list: list.slice(0, 2).reverse() });
+        return { list, risk: risk.length ? risk : null };
+      }),
+      incidentAdd: (cardId, day, kind, note) => run(() => {
+        guard(); if (!day) throw new Error('Sprawdź datę wizyty.');
+        const db = load(); db.incidents = db.incidents || [];
+        db.incidents.push({ id: Date.now(), card_id: cardId, kind, at: new Date(day + 'T12:00:00').toISOString(), source: 'manual', service: null, note: (note || '').trim() || null });
+        save(db);
+      }),
+      incidentDelete: (id) => run(() => { guard(); const db = load(); db.incidents = (db.incidents || []).filter((i) => i.id !== id); save(db); }),
       gapList: () => run(() => {
         guard(); const db = load();
         return (db.gaps || []).slice().sort((a, b) => (b.status === 'ask') - (a.status === 'ask') || b.day.localeCompare(a.day) || a.start_at.localeCompare(b.start_at))
@@ -949,6 +1008,13 @@
       gapSmsAutoGet: () => rpc('gap_sms_auto_get', {}),
       gapSmsAutoSet: (on) => rpc('gap_sms_auto_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
+      // historia odwołań (historia-odwolan.sql); bez tego SQL panel działa jak dawniej
+      riskAlerts: async () => { try { return await rpc('risk_alerts_list', {}); } catch (e) { if (noFn(e)) return []; throw e; } },
+      riskAlertSms: (id, text) => rpc('risk_alert_sms', { p_id: id, p_text: text }),
+      riskAlertDismiss: (id) => rpc('risk_alert_dismiss', { p_id: id }),
+      incidentsCard: async (cardId) => { try { return await rpc('incidents_card', { p_card: cardId }); } catch (e) { if (noFn(e)) return null; throw e; } },
+      incidentAdd: (cardId, day, kind, note) => rpc('incident_add', { p_card: cardId, p_day: day, p_kind: kind, p_note: note || null }),
+      incidentDelete: (id) => rpc('incident_delete', { p_id: id }),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
       gapSendNow: (day, windows, channel) => rpc('gap_send_now', { p_day: day, p_windows: windows || null, p_channel: channel }),
