@@ -12,6 +12,7 @@
  *
  * Adresy (prefiks /wp-json/tctd/v1/paragon):
  *   GET  /rytualy        lista rytuałów z cenami (produkty z kategorii „Rytuały – paragon”)
+ *                        i na końcu pozycja „Zadatek na poczet rezerwacji terminu” (deposit: true, kwota dowolna)
  *   POST /               { client_ref, product_id, amount, payment, name, email, phone? }
  *   GET  /{order_id}     status paragonu
  *   GET  /historia       ostatnie paragony za rytuały
@@ -28,6 +29,8 @@ defined( 'TCTD_PARAGON_SUPABASE_URL' ) || define( 'TCTD_PARAGON_SUPABASE_URL', '
 defined( 'TCTD_PARAGON_SUPABASE_KEY' ) || define( 'TCTD_PARAGON_SUPABASE_KEY', 'sb_publishable_Fs1pn9qjzVEHJjr9Qt8dEw_WicjPg3C' ); // klucz publiczny, ten sam co w aplikacji
 defined( 'TCTD_PARAGON_CAT' ) || define( 'TCTD_PARAGON_CAT', 'rytualy-paragon' );
 defined( 'TCTD_PARAGON_META' ) || define( 'TCTD_PARAGON_META', '_tctd_paragon_rytual' );
+defined( 'TCTD_PARAGON_DEPOSIT_SKU' ) || define( 'TCTD_PARAGON_DEPOSIT_SKU', 'zadatek-rezerwacja' );
+defined( 'TCTD_PARAGON_DEPOSIT_MAX' ) || define( 'TCTD_PARAGON_DEPOSIT_MAX', 2000 ); // najwyższy zadatek w zł
 
 // Lista startowa (cennik z Booksy, listopad 2026). Używana tylko, gdy kategoria jest pusta.
 function tctd_paragon_defaults() {
@@ -136,10 +139,45 @@ function tctd_paragon_products() {
 	return $list;
 }
 
+// Zadatek na poczet rezerwacji terminu: osobny ukryty produkt bez stałej ceny (kwotę wpisuje się w panelu).
+// Zakładany sam przy pierwszym użyciu. Nazwę na paragonie zmieniasz w WooCommerce → Produkty.
+function tctd_paragon_deposit_product() {
+	$id = wc_get_product_id_by_sku( TCTD_PARAGON_DEPOSIT_SKU );
+	if ( $id && ( $p = wc_get_product( $id ) ) ) {
+		return $p;
+	}
+	$cat = tctd_paragon_category_id();
+	if ( ! $cat ) {
+		return null;
+	}
+	$p = new WC_Product_Simple();
+	$p->set_name( 'Zadatek na poczet rezerwacji terminu' );
+	$p->set_regular_price( '0' );
+	$p->set_virtual( true );
+	$p->set_status( 'private' );
+	$p->set_catalog_visibility( 'hidden' );
+	$p->set_menu_order( 999 );
+	$p->set_category_ids( array( $cat ) );
+	$p->set_sku( TCTD_PARAGON_DEPOSIT_SKU );
+	$p->save();
+	return $p;
+}
+
+function tctd_paragon_is_deposit( $product ) {
+	return $product && $product->get_sku() === TCTD_PARAGON_DEPOSIT_SKU;
+}
+
 function tctd_paragon_list() {
 	$out = array();
 	foreach ( tctd_paragon_products() as $p ) {
+		if ( tctd_paragon_is_deposit( $p ) ) {
+			continue; // zadatek zawsze na końcu listy
+		}
 		$out[] = array( 'id' => $p->get_id(), 'name' => $p->get_name(), 'price' => (float) $p->get_regular_price() );
+	}
+	$dep = tctd_paragon_deposit_product();
+	if ( $dep ) {
+		$out[] = array( 'id' => $dep->get_id(), 'name' => $dep->get_name(), 'price' => 0, 'deposit' => true, 'max' => TCTD_PARAGON_DEPOSIT_MAX );
 	}
 	return $out;
 }
@@ -167,6 +205,7 @@ function tctd_paragon_row( WC_Order $order ) {
 		'service'      => $item ? $item->get_name() : '',
 		'total'        => (float) $order->get_total(),
 		'payment'      => (string) $order->get_meta( '_tctd_paragon_payment' ),
+		'deposit'      => (bool) $order->get_meta( '_tctd_paragon_zadatek' ),
 		'name'         => trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ),
 		'email'        => $order->get_billing_email(),
 	), tctd_paragon_receipt( $order ) );
@@ -212,9 +251,12 @@ function tctd_paragon_issue( WP_REST_Request $req ) {
 	if ( ! $product || ! has_term( TCTD_PARAGON_CAT, 'product_cat', $pid ) ) {
 		return new WP_Error( 'tctd_400', 'Wybierz rytuał z listy.', array( 'status' => 400 ) );
 	}
-	$price = (float) $product->get_regular_price();
+	$deposit = tctd_paragon_is_deposit( $product );
+	$price   = $deposit ? (float) TCTD_PARAGON_DEPOSIT_MAX : (float) $product->get_regular_price();
 	if ( $amount < 1 || $amount > $price ) {
-		return new WP_Error( 'tctd_400', 'Kwota musi być od 1 zł do ceny rytuału (' . wc_format_decimal( $price, 2 ) . ' zł).', array( 'status' => 400 ) );
+		return new WP_Error( 'tctd_400', $deposit
+			? 'Zadatek musi być od 1 zł do ' . wc_format_decimal( $price, 0 ) . ' zł.'
+			: 'Kwota musi być od 1 zł do ceny rytuału (' . wc_format_decimal( $price, 2 ) . ' zł).', array( 'status' => 400 ) );
 	}
 	if ( ! isset( $payments[ $payment ] ) ) {
 		return new WP_Error( 'tctd_400', 'Wybierz sposób płatności.', array( 'status' => 400 ) );
@@ -250,8 +292,11 @@ function tctd_paragon_issue( WP_REST_Request $req ) {
 	$order->update_meta_data( TCTD_PARAGON_META, '1' );
 	$order->update_meta_data( '_tctd_paragon_ref', $ref );
 	$order->update_meta_data( '_tctd_paragon_payment', $payment );
+	if ( $deposit ) {
+		$order->update_meta_data( '_tctd_paragon_zadatek', '1' );
+	}
 	$order->calculate_totals( false );
-	$order->add_order_note( 'Paragon za rytuał wystawiony z panelu studia.' );
+	$order->add_order_note( $deposit ? 'Paragon za zadatek na poczet rezerwacji terminu wystawiony z panelu studia.' : 'Paragon za rytuał wystawiony z panelu studia.' );
 	$order->save();
 
 	// Opłacone na miejscu: wtyczka eparagony.pl wysyła paragon do drukarki i e-paragon na e-mail.
