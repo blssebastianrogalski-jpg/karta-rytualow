@@ -97,6 +97,7 @@
       <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       <div id="smsAlert"></div>
+      <div id="risks"></div>
       <div id="reqs"></div>
       <div id="bdays"></div>
       <div id="refs"></div>
@@ -152,6 +153,7 @@
     loadList();
     loadRequests();
     loadSmsAlert();
+    loadRisks();
     loadGaps();
   }
 
@@ -181,6 +183,141 @@
     $('#smsAlertHide').addEventListener('click', async () => {
       try { await Api.smsAlertDismiss(); } catch (e) { /* zostaw */ }
       box.innerHTML = '';
+    });
+  }
+
+  // ---------- rezerwacje osób z historią odwołań (Regulamin wizyt, pkt 3 i 5) ----------
+  // Panel tylko ostrzega. SMS do klientki wychodzi wyłącznie po kliknięciu „Wyślij SMS”.
+  const INC_KIND = { cancel: 'odwołanie ponad 24 h przed', late: 'odwołanie później niż 24 h przed', noshow: 'nie przyszła' };
+  const INC_SRC = { booksy: 'Booksy', app: 'aplikacja', panel: 'panel', manual: 'wpis ręczny' };
+  const RISK_SRC = { booksy: 'rezerwacja w Booksy', app: 'prośba o termin w aplikacji', plan: 'wpis w planie' };
+  const SMS_MAX = 459;
+  const NUM_WORD = { 2: 'dwie', 3: 'trzy', 4: 'cztery' };
+  const shortDay = (iso) => new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'numeric', timeZone: 'Europe/Warsaw' });
+  const incLine = (l) => (l || []).map((i) => shortDay(i.at) + ' (' + (INC_KIND[i.kind] || i.kind).replace('odwołanie później niż 24 h przed', 'późne odwołanie').replace('odwołanie ponad 24 h przed', 'odwołanie') + ')').join(', ');
+  const riskReason = (r) => r.rule === 'year'
+    ? r.n + ' ' + UI.plural(r.n, 'nieodbyta wizyta', 'nieodbyte wizyty', 'nieodbytych wizyt') + ' w tym roku: ' + incLine(r.list)
+    : 'Dwie ostatnie rezerwacje odwołane: ' + incLine(r.list);
+  // „pon. 16.11, 14:00”
+  const smsWhen = (day, iso) => ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'][new Date(day + 'T12:00:00').getDay()] + ' ' +
+    day.slice(8, 10) + '.' + day.slice(5, 7) + (iso ? ', ' + hhmm(iso) : '');
+  // Pani czy Pan: po imieniu (w polskich imionach żeńskich zwykle końcówka -a); w oknie SMS da się zmienić
+  const MALE_A = ['kuba', 'barnaba', 'bonawentura', 'kosma', 'jarema', 'dyzma', 'zawisza', 'sasza', 'misza', 'nikita', 'luca', 'andrea'];
+  const FEMALE = ['beatrycze', 'noemi', 'miriam', 'nel', 'abigail', 'ingrid', 'karmen', 'carmen', 'rut', 'dagmar', 'ines', 'inez', 'iris', 'margot', 'nicole', 'vivien', 'lilian', 'agnes', 'dolores', 'mercedes'];
+  function guessPani(name) {
+    const f = String(name || '').trim().split(/\s+/)[0].toLowerCase();
+    if (!f) return true;
+    if (FEMALE.includes(f)) return true;
+    if (MALE_A.includes(f)) return false;
+    return f.endsWith('a');
+  }
+  function riskSms(a, pani) {
+    const P = pani ? 'Pani' : 'Pana';
+    const year = (a.reasons || []).find((r) => r.rule === 'year');
+    const n = year ? year.n : 2;
+    const why = year
+      ? 'W tym roku ' + (NUM_WORD[n] || n) + ' ' + P + ' ' + (n < 5 ? 'wizyty zostały odwołane' : 'wizyt zostało odwołanych') + ' później niż 24 h przed terminem lub się nie odbyły.'
+      : 'Dwie ostatnie ' + P + ' rezerwacje zostały odwołane.';
+    const what = a.source === 'app' && !a.visit_at ? 'prośbę o termin ' + smsWhen(a.day) : 'rezerwację wizyty ' + smsWhen(a.day, a.visit_at);
+    return (pani ? 'Szanowna Pani' : 'Szanowny Panie') + ', dziękuję za ' + what + '. ' + why +
+      ' Zgodnie z Regulaminem wizyt ta rezerwacja wymaga zadatku 50% ceny rytuału: twojecialotwojdobrostan.pl/produkt/zadatek-za-wizyte' +
+      ' Termin jest potwierdzony, gdy zadatek do mnie dotrze. Regulamin: twojecialotwojdobrostan.pl/regulamin-wizyt';
+  }
+  const smsParts = (t) => t.length <= 160 ? 1 : Math.ceil(t.length / 153);
+  let risks = [];
+  async function loadRisks() {
+    const box = $('#risks');
+    try { risks = await Api.riskAlerts(); } catch (e) { risks = []; } // baza jeszcze bez historii odwołań
+    if (!box) return;
+    const open = risks.filter((a) => a.status === 'new');
+    const done = risks.filter((a) => a.status !== 'new');
+    if (!risks.length) { box.innerHTML = ''; return; }
+    const when = (a) => (a.visit_at ? dateLabel(a.day) + ', ' + hhmm(a.visit_at) : dateLabel(a.day) + (a.source === 'app' ? ' (prośba, godzina do ustalenia)' : ''));
+    box.innerHTML = `
+      ${open.length ? `<div class="hint hint--error" id="ostrzezenia" style="display:flex;flex-direction:column;gap:12px">
+        <span class="strong">${open.length === 1 ? 'Umówiła się osoba z historią odwołań' : 'Umówiły się osoby z historią odwołań: ' + open.length}</span>
+        ${open.map((a, i) => `<div style="display:flex;flex-direction:column;gap:4px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
+          ${a.card_id ? `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(a.card_id)}">${esc(a.name)}</button>` : `<span class="strong">${esc(a.name)}</span>`}
+          <span class="strong gold">${esc(when(a))}${a.service ? ' · ' + esc(a.service) : ''}</span>
+          <span class="small" style="color:var(--text-2)">${esc(RISK_SRC[a.source] || a.source)}${a.phone ? ' · ' + esc(a.phone) : ''}</span>
+          ${(a.reasons || []).map((r) => `<span class="small" style="color:var(--text)">${esc(riskReason(r))}</span>`).join('')}
+          <span class="small" style="color:var(--text-2)">Według regulaminu (pkt 5) ta wizyta wymaga zadatku 50%. Decyzja należy do Ciebie.</span>
+          <div class="btn-row" style="margin-top:4px">
+            <button class="btn btn--gold btn--sm" data-risk-sms="${a.id}">Napisz SMS o zadatku</button>
+            <button class="btn btn--ghost btn--sm" data-risk-no="${a.id}">Pomiń</button>
+          </div>
+        </div>`).join('')}
+      </div>` : ''}
+      ${done.length ? `<details class="panel" style="padding:14px 16px;gap:8px">
+        <summary class="eyebrow" style="cursor:pointer">Historia odwołań · załatwione (14 dni): ${done.length}</summary>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((a) => `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(a.name)}</span><span class="small">${esc(when(a))} · ${a.status === 'sent' ? 'SMS wysłany ' + esc(UI.fmtShort(a.handled_at)) : 'pominięte'}</span></div>`).join('')}</div>
+      </details>` : ''}`;
+    box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
+    box.querySelectorAll('[data-risk-sms]').forEach((b) => b.addEventListener('click', () => openRiskSms(risks.find((a) => a.id === +b.dataset.riskSms))));
+    box.querySelectorAll('[data-risk-no]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await Api.riskAlertDismiss(+b.dataset.riskNo); toast('Pominięte. Nic nie zostało wysłane.'); } catch (e) { fail(e); }
+      loadRisks();
+    }));
+    if (location.hash === '#ostrzezenia' && open.length) { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
+  }
+
+  function openRiskSms(a) {
+    if (!a) return;
+    let pani = guessPani(a.name), edited = false;
+    const night = () => { const h = +new Date().toLocaleTimeString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Europe/Warsaw' }); return h >= 21 || h < 8; };
+    openSheet(`${bar('SMS o zadatku')}
+      <p class="lead" style="margin-top:-8px">${esc(a.name)} · ${esc(smsWhen(a.day, a.visit_at))}</p>
+      <form class="panel" id="rsForm" novalidate>
+        <span class="eyebrow">Zwrot grzecznościowy</span>
+        <div class="btn-row">
+          <label class="check" style="flex:1"><input type="radio" name="rsForm" value="pani" ${pani ? 'checked' : ''}> <span>Pani</span></label>
+          <label class="check" style="flex:1"><input type="radio" name="rsForm" value="pan" ${pani ? '' : 'checked'}> <span>Pan</span></label>
+        </div>
+        <div class="field"><label for="rsText">Treść SMS-a (możesz ją zmienić)</label><textarea class="input" id="rsText" rows="9" maxlength="${SMS_MAX}"></textarea></div>
+        <span class="small" id="rsCount" style="margin-top:-6px"></span>
+        <p class="small" style="margin:0">SMS wyjdzie z nazwy TwojeCialo na numer <b>${esc(a.phone || 'brak numeru')}</b>, dopiero gdy klikniesz „Wyślij SMS” i potwierdzisz.</p>
+        <p class="error" id="rsNight" role="status" ${night() ? '' : 'hidden'} style="margin:0">Jest pora ciszy nocnej (21:00–8:00). Możesz też wysłać SMS rano.</p>
+        <p class="error" id="rsErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="rsSend" ${a.phone ? '' : 'disabled'}>Wyślij SMS</button>
+        ${a.phone ? `<a class="btn btn--ghost btn--sm" id="rsPhone" href="#">Wolę wysłać z mojego telefonu</a>` : ''}
+      </form>`);
+    const ta = $('#rsText');
+    const count = () => {
+      const n = ta.value.trim().length;
+      $('#rsCount').textContent = n + ' / ' + SMS_MAX + ' znaków · ' + smsParts(ta.value.trim()) + ' ' + UI.plural(smsParts(ta.value.trim()), 'SMS', 'SMS-y', 'SMS-ów');
+      const ph = $('#rsPhone');
+      if (ph) ph.setAttribute('href', 'sms:' + a.phone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(ta.value.trim()));
+    };
+    const fill = () => { ta.value = riskSms(a, pani); count(); };
+    fill();
+    ta.addEventListener('input', () => { edited = true; count(); });
+    sheetIn.querySelectorAll('input[name="rsForm"]').forEach((r) => r.addEventListener('change', async () => {
+      const next = r.value === 'pani';
+      if (next === pani) return;
+      if (edited && !(await UI.ask('Zmienić zwrot? Twoje zmiany w treści zostaną zastąpione nowym tekstem.', 'Zmień'))) {
+        sheetIn.querySelector('input[name="rsForm"][value="' + (pani ? 'pani' : 'pan') + '"]').checked = true; return;
+      }
+      pani = next; edited = false; fill();
+    }));
+    const ph = $('#rsPhone');
+    if (ph) ph.addEventListener('click', async (e) => {
+      if (!(await UI.ask('Otworzę SMS w Twoim telefonie. Po wysłaniu oznaczę ostrzeżenie jako załatwione.', 'Otwórz'))) { e.preventDefault(); return; }
+      Api.riskAlertDismiss(a.id).catch(() => {});
+      setTimeout(() => { closeSheet(); loadRisks(); }, 300);
+    });
+    $('#rsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      const err = $('#rsErr'); err.hidden = true;
+      if (text.length < 10) { err.textContent = 'Wpisz treść SMS-a.'; err.hidden = false; return; }
+      if (!(await UI.ask('Wysłać ten SMS do: ' + a.name + ' (' + a.phone + ')?', 'Wyślij'))) return;
+      const btn = $('#rsSend'); btn.disabled = true;
+      try {
+        const r = await Api.riskAlertSms(a.id, text);
+        closeSheet(); loadRisks();
+        toast(r && r.demo ? 'Tryb pokazowy: SMS nie został naprawdę wysłany.' : 'SMS wysłany do: ' + a.name + '.');
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     });
   }
 
@@ -827,27 +964,34 @@
     if (!p) return;
     const cur = p.start_at ? new Date(p.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
     const future = (p.start_at ? new Date(p.start_at) : new Date(p.day + 'T23:59')) > new Date();
+    // „Nie przyszła” ma sens od dnia wizyty (godzina już minęła albo wizyta bez godziny dziś)
+    const started = p.start_at ? new Date(p.start_at) <= new Date() : p.day <= Rules.dayPL(0);
     openSheet(`${bar('Usuń z planu')}
       <p class="lead" style="margin-top:-8px">${esc(p.name)}</p>
       <p class="small" style="margin:-10px 0 4px">${esc(whenName(p.day))}${cur ? ', ' + esc(cur) : ''}${p.service ? ' · ' + esc(p.service) : ''}</p>
       <form class="panel" id="pcForm" novalidate>
         <span class="eyebrow">Dlaczego usuwasz?</span>
-        <label class="check"><input type="radio" name="pcWhy" value="client" checked> <span><b>Klientka odwołała.</b> Wolne okienko może trafić do automatu „Wolne terminy”, tak jak przy odwołaniu w aplikacji.</span></label>
-        <label class="check"><input type="radio" name="pcWhy" value="mistake"> <span><b>Pomyłka w planie.</b> Nikt nie dostanie oferty tego okienka.</span></label>
-        ${p.card_id && !p.booking_id && future ? '<label class="check"><input type="checkbox" id="pcSms"> <span>Wyślij klientce SMS, że wizyta jest odwołana (i powiadomienie w aplikacji)</span></label>' : ''}
+        <label class="check"><input type="radio" name="pcWhy" value="client" checked> <span><b>Klientka odwołała.</b> Wolne okienko może trafić do automatu „Wolne terminy”, tak jak przy odwołaniu w aplikacji. Odwołanie zapisze się w historii odwołań.</span></label>
+        ${started ? '<label class="check"><input type="radio" name="pcWhy" value="noshow"> <span><b>Nie przyszła.</b> Bez uprzedzenia. Zapisze się w historii odwołań jako nieodbyta wizyta.</span></label>' : ''}
+        <label class="check"><input type="radio" name="pcWhy" value="mistake"> <span><b>Pomyłka w planie.</b> Nikt nie dostanie oferty tego okienka i nic nie trafi do historii odwołań.</span></label>
+        ${p.card_id && !p.booking_id && future ? '<label class="check" id="pcSmsRow"><input type="checkbox" id="pcSms"> <span>Wyślij klientce SMS, że wizyta jest odwołana (i powiadomienie w aplikacji)</span></label>' : ''}
         <p class="small" style="margin:0">Karta i pieczątki zostają bez zmian.${p.booking_id ? ' Rezerwację odwołaj też w Booksy, Booksy samo powiadomi klientkę.' : ''}</p>
         <p class="error" id="pcErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit" id="pcSave">Usuń z planu</button>
       </form>`);
+    // „Nie przyszła”: bez SMS-u o odwołaniu
+    sheetIn.querySelectorAll('input[name="pcWhy"]').forEach((r) => r.addEventListener('change', () => {
+      const row = $('#pcSmsRow'); if (row) row.hidden = r.value === 'noshow' && r.checked;
+    }));
     $('#pcForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const why = (sheetIn.querySelector('input[name="pcWhy"]:checked') || {}).value || 'client';
-      const sms = !!($('#pcSms') && $('#pcSms').checked);
+      const sms = why !== 'noshow' && !!($('#pcSms') && $('#pcSms').checked);
       const btn = $('#pcSave'); btn.disabled = true;
       try {
         const r = await Api.planCancel(p.id, why, sms);
         closeSheet();
-        toast('Usunięto z planu.' + (sms ? (r && r.sms ? ' Klientka dostanie SMS.' : ' Brak numeru telefonu, SMS nie poszedł.') : ''));
+        toast((why === 'noshow' ? 'Zapisano: nie przyszła.' : 'Usunięto z planu.') + (sms ? (r && r.sms ? ' Klientka dostanie SMS.' : ' Brak numeru telefonu, SMS nie poszedł.') : ''));
       } catch (ex) { const el = $('#pcErr'); el.textContent = ex.message; el.hidden = false; btn.disabled = false; }
     });
   }
@@ -944,6 +1088,7 @@
         ${c.note ? `<div class="hint">${esc(c.note)}</div>` : ''}
         <button class="btn btn--ghost btn--sm" id="editBtn">Edytuj dane</button>
       </section>
+      <section style="display:flex;flex-direction:column;gap:10px" id="incBox" hidden></section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <span class="eyebrow">Historia wizyt</span>
         <div class="panel panel--tight">${(c.visits || []).length ? c.visits.map((v) => `<div class="list-row"><span>${esc(MODE_LABEL[v.kind])}${v.service ? ' · ' + esc(v.service) : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}${v.kind === 'package_visit' || v.kind === 'birthday' ? ' <span class="tag">bez pieczątki</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('') : '<p class="small" style="padding:12px 0;margin:0">Brak wizyt.</p>'}</div>
@@ -975,6 +1120,7 @@
       box.innerHTML = box.hidden ? '' : `<div class="qr-card">${UI.qrSvg(linkFor(c), { label: 'Kod do połączenia karty z aplikacją' })}<span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje ten kod aparatem w swoim telefonie i dodaje kartę do ekranu telefonu.</span></div>`;
     });
     on('#printBtn', () => printCard(c));
+    loadIncidents(c);
     $('#smsBtn').setAttribute('href', smsHref(c));
     const smsOk = $('#smsOk');
     if (c.phone) Api.smsConsent(c.id).then((ok) => { smsOk.checked = !!ok; $('#smsOkRow').hidden = false; }).catch(() => {});
@@ -985,6 +1131,52 @@
   }
 
   function on(sel, fn) { const el = sheetIn.querySelector(sel); if (el) el.addEventListener('click', fn); }
+
+  // historia odwołań w karcie: automatycznie z Booksy, aplikacji i planu + ręczne wpisy (starsza historia)
+  async function loadIncidents(c) {
+    let r = null;
+    try { r = await Api.incidentsCard(c.id); } catch (e) { r = null; }
+    const box = sheetIn.querySelector('#incBox');
+    if (!r || !box || current !== c) return; // baza jeszcze bez historii odwołań albo karta już zamknięta
+    const list = r.list || [], risk = r.risk || [];
+    box.hidden = false;
+    box.innerHTML = `
+      <span class="eyebrow">Historia odwołań</span>
+      ${risk.length ? `<div class="hint hint--error" style="display:flex;flex-direction:column;gap:4px"><span class="strong">Następna wizyta z zadatkiem 50% (regulamin, pkt 5)</span>${risk.map((x) => `<span class="small" style="color:var(--text)">${esc(riskReason(x))}</span>`).join('')}</div>` : ''}
+      <div class="panel panel--tight">${list.length ? list.map((i) => `<div class="list-row"><span>${esc(INC_KIND[i.kind] || i.kind)}${i.service ? ' · ' + esc(i.service) : ''} <span class="small">· ${esc(INC_SRC[i.source] || i.source)}${i.note ? ' · ' + esc(i.note) : ''}</span></span><span style="display:flex;align-items:center;gap:6px;white-space:nowrap">${esc(new Date(i.at).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Warsaw' }))}<button class="linkbtn" data-inc-del="${i.id}" aria-label="Usuń wpis" style="min-height:30px;padding:0 4px">×</button></span></div>`).join('') : '<p class="small" style="padding:12px 0;margin:0">Brak odwołań. Tak trzymać!</p>'}</div>
+      <button class="btn btn--ghost btn--sm" id="incAddBtn">+ Dopisz odwołanie albo nieobecność</button>`;
+    box.querySelector('#incAddBtn').addEventListener('click', () => openIncidentAdd(c));
+    box.querySelectorAll('[data-inc-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!(await UI.ask('Usunąć ten wpis z historii odwołań?', 'Usuń'))) return;
+      try { await Api.incidentDelete(+b.dataset.incDel); toast('Usunięto wpis.'); loadIncidents(c); } catch (e) { fail(e); }
+    }));
+  }
+
+  function openIncidentAdd(c) {
+    const back = c;
+    openSheet(`${bar('Dopisz do historii odwołań')}
+      <p class="lead" style="margin-top:-8px">${esc(c.name)}</p>
+      <form class="panel" id="incForm" novalidate>
+        <div class="field"><label for="incDay">Dzień wizyty</label><input class="input" id="incDay" type="date" min="2025-01-01" max="${Rules.dayPL(0)}" value="${Rules.dayPL(0)}"></div>
+        <span class="eyebrow">Co się stało?</span>
+        <label class="check"><input type="radio" name="incKind" value="late" checked> <span>Odwołała później niż 24 h przed wizytą</span></label>
+        <label class="check"><input type="radio" name="incKind" value="noshow"> <span>Nie przyszła bez uprzedzenia</span></label>
+        <label class="check"><input type="radio" name="incKind" value="cancel"> <span>Odwołała wcześniej niż 24 h przed wizytą</span></label>
+        <div class="field"><label for="incNote">Notatka (opcjonalnie)</label><input class="input" id="incNote" maxlength="200" placeholder="np. telefon rano w dniu wizyty"></div>
+        <p class="small" style="margin:0">Regulamin liczy dwie nieodbyte wizyty w roku kalendarzowym oraz dwa odwołania pod rząd.</p>
+        <p class="error" id="incErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit">Zapisz</button>
+      </form>`);
+    $('#incForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const kind = (sheetIn.querySelector('input[name="incKind"]:checked') || {}).value;
+      try {
+        await Api.incidentAdd(back.id, $('#incDay').value, kind, $('#incNote').value);
+        toast('Zapisano w historii odwołań.');
+        current = back; renderCard();
+      } catch (ex) { const el = $('#incErr'); el.textContent = ex.message; el.hidden = false; }
+    });
+  }
 
   async function record(mode, service, btn) {
     const c = current;
