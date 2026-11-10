@@ -211,17 +211,98 @@
     if (MALE_A.includes(f)) return false;
     return f.endsWith('a');
   }
-  function riskSms(a, pani) {
+  // Ciepły zwrot po imieniu (wołacz zdrobnienia), ta sama lista co w życzeniach urodzinowych (call_name w bazie)
+  const CALL = { Anna: 'Aniu', Ania: 'Aniu', Hanna: 'Haniu', Katarzyna: 'Kasiu', Kasia: 'Kasiu', Magdalena: 'Madziu', Magda: 'Madziu',
+    'Małgorzata': 'Gosiu', Gosia: 'Gosiu', Joanna: 'Asiu', Asia: 'Asiu', Barbara: 'Basiu', Agnieszka: 'Agnieszko',
+    Marta: 'Martusiu', Renata: 'Renatko', Justyna: 'Justynko', Ewa: 'Ewuniu', Dorota: 'Dorotko', Zuzanna: 'Zuziu',
+    Sylwia: 'Sylwio', Paulina: 'Paulinko', Patrycja: 'Patrycjo', Monika: 'Moniko', Karolina: 'Karolinko', Jolanta: 'Jolu',
+    Iwona: 'Iwonko', Daria: 'Dario', 'Bożena': 'Bożenko', 'Bożenna': 'Bożenko', Aleksandra: 'Olu', Ola: 'Olu', Adrianna: 'Adrianno',
+    Beata: 'Beatko', 'Elżbieta': 'Elu', Ela: 'Elu', Natalia: 'Natalko', Weronika: 'Weroniko', Julia: 'Julio', Alicja: 'Alu',
+    Emilia: 'Emilko', Kinga: 'Kingo', Izabela: 'Izo', Aneta: 'Anetko', Edyta: 'Edytko', Klaudia: 'Klaudio', Wioletta: 'Wioletko',
+    Teresa: 'Tereso', 'Grażyna': 'Grażynko', Danuta: 'Danusiu', Halina: 'Halinko', Krystyna: 'Krysiu', Urszula: 'Ulu',
+    Wiktoria: 'Wiktorio', Maria: 'Marysiu', Marysia: 'Marysiu', Martyna: 'Martynko', Kamila: 'Kamilko', Dominika: 'Dominiko',
+    Angelika: 'Angeliko', Ilona: 'Ilonko', Lucyna: 'Lucynko', Anita: 'Anitko', Milena: 'Milenko', Oliwia: 'Oliwio',
+    Gabriela: 'Gabrysiu', Ewelina: 'Ewelinko', Marzena: 'Marzenko', Sandra: 'Sandro', 'Mirosława': 'Mirko', Zofia: 'Zosiu',
+    Wojtek: 'Wojtku', Wojciech: 'Wojtku', 'Radosław': 'Radku', 'Przemysław': 'Przemku', Marek: 'Marku', Piotr: 'Piotrze',
+    Tomasz: 'Tomku', 'Paweł': 'Pawle', 'Michał': 'Michale', Krzysztof: 'Krzysiu', Adam: 'Adamie', 'Łukasz': 'Łukaszu',
+    Jakub: 'Kubo', Kamil: 'Kamilu', Mateusz: 'Mateuszu', Andrzej: 'Andrzeju', Robert: 'Robercie', 'Rafał': 'Rafale',
+    Dariusz: 'Darku', Grzegorz: 'Grzesiu', Jan: 'Janku', Marcin: 'Marcinie', Bartosz: 'Bartku', Sebastian: 'Sebastianie' };
+  function callName(name) {
+    const w = String(name || '').trim().split(/\s+/)[0] || '';
+    const n = w ? w.charAt(0).toLocaleUpperCase('pl-PL') + w.slice(1).toLocaleLowerCase('pl-PL') : '';
+    if (!n) return '';
+    if (CALL[n]) return CALL[n];
+    if (/ia$/.test(n)) return n.replace(/a$/, 'u');
+    if (/a$/.test(n)) return n.replace(/a$/, 'o');
+    return n;
+  }
+  const greetFor = (name, pani) => { const c = callName(name); return (pani ? 'Pani' : 'Panie') + (c ? ' ' + c : ''); };
+  const longDay = (day) => new Date(day + 'T12:00:00').toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' });
+  const todayPL = () => Rules.dayPL(0);
+  // Termin wpłaty zadatku: jutro, ale najpóźniej dzień przed wizytą (przy wizycie jutro lub dziś: dzisiaj)
+  function payByDefault(day) {
+    const tomorrow = Rules.dayPL(1);
+    if (!day || day > tomorrow) return tomorrow;
+    return todayPL();
+  }
+  const NUM_F = { 1: 'jedna', 2: 'dwie', 3: 'trzy', 4: 'cztery' };
+  const NUM_ADJ = { 1: 'wcześniejsza', few: 'wcześniejsze', many: 'wcześniejszych' };
+  // o: { greet, extra, payBy } — pola z okna SMS
+  function riskSms(a, pani, o) {
+    o = o || {};
     const P = pani ? 'Pani' : 'Pana';
     const year = (a.reasons || []).find((r) => r.rule === 'year');
-    const n = year ? year.n : 2;
-    const why = year
-      ? 'W tym roku ' + (NUM_WORD[n] || n) + ' ' + P + ' ' + (n < 5 ? 'wizyty zostały odwołane' : 'wizyt zostało odwołanych') + ' później niż 24 h przed terminem lub się nie odbyły.'
-      : 'Dwie ostatnie ' + P + ' rezerwacje zostały odwołane.';
-    const what = a.source === 'app' && !a.visit_at ? 'prośbę o termin ' + smsWhen(a.day) : 'rezerwację wizyty ' + smsWhen(a.day, a.visit_at);
-    return (pani ? 'Szanowna Pani' : 'Szanowny Panie') + ', dziękuję za ' + what + '. ' + why +
-      ' Zgodnie z Regulaminem wizyt ta rezerwacja wymaga zadatku 50% ceny rytuału: twojecialotwojdobrostan.pl/produkt/zadatek-za-wizyte' +
-      ' Termin jest potwierdzony, gdy zadatek do mnie dotrze. Regulamin: twojecialotwojdobrostan.pl/regulamin-wizyt';
+    const row = (a.reasons || []).find((r) => r.rule === 'row');
+    const visitDay = longDay(a.day);
+    const lines = [];
+    lines.push('Dzień dobry' + (o.greet ? ' ' + o.greet : '') + '.');
+    lines.push(a.source === 'app' && !a.visit_at
+      ? 'Dziękuję za wiadomość i prośbę o termin ' + visitDay + '.'
+      : 'Dziękuję, że ' + (pani ? 'wybrała Pani' : 'wybrał Pan') + ' termin ' + visitDay + (a.visit_at ? ', godz. ' + hhmm(a.visit_at) : '') + '.');
+    if (o.extra && o.extra.trim()) lines.push(o.extra.trim());
+
+    let why, rule, lost;
+    if (year) {
+      const list = year.list || [];
+      const n = year.n || list.length || 2;
+      const kinds = list.map((i) => i.kind);
+      const allLate = kinds.length && kinds.every((k) => k === 'late');
+      const allNo = kinds.length && kinds.every((k) => k === 'noshow');
+      const last = list.length ? list[list.length - 1] : null;
+      const lastToday = last && new Date(last.at).toLocaleDateString('en-CA', { timeZone: 'Europe/Warsaw' }) === todayPL();
+      let subject, many;
+      if (lastToday) {
+        const m = n - 1;
+        subject = 'Dzisiejsza wizyta i ' + (m < 5 ? (NUM_F[m] || m) + ' ' + (m === 1 ? NUM_ADJ[1] : NUM_ADJ.few) : m + ' ' + NUM_ADJ.many);
+        many = false;
+      } else {
+        subject = 'W tym roku ' + (n < 5 ? (NUM_F[n] || n) + ' ' + P + ' wizyty' : n + ' ' + P + ' wizyt');
+        many = n >= 5;
+      }
+      const odw = many ? 'zostało odwołanych' : 'zostały odwołane';
+      const nie = many ? 'nie odbyło się' : 'nie odbyły się';
+      why = subject + ' ' + (allLate ? odw + ' w czasie krótszym niż 24 godz. przed wizytą.'
+        : allNo ? nie + ' bez wcześniejszego odwołania.'
+        : odw + ' w czasie krótszym niż 24 godz. przed wizytą lub ' + nie + ' bez odwołania.');
+      rule = allLate ? 'po dwóch odwołaniach krótszych niż 24 godziny przed wizytą'
+        : 'po dwóch wizytach, które się nie odbyły (odwołanych krócej niż 24 godziny przed terminem lub bez odwołania),';
+      lost = 'W takiej sytuacji nie mam już szansy zaproponować tego czasu osobie, która czeka na wolny termin.';
+    } else {
+      why = 'Dwie ostatnie ' + P + ' rezerwacje zostały odwołane, jedna po drugiej.';
+      rule = 'po dwóch odwołaniach z rzędu';
+      lost = 'Każdy taki termin trudno mi potem zaproponować osobie, która czeka na wolne miejsce.';
+    }
+    lines.push('Muszę jednak napisać o jednej ważnej rzeczy. ' + why);
+    lines.push(lost);
+    lines.push('Dlatego zgodnie z Regulaminem wizyt ' + rule + ' ' + 'kolejną rezerwację potwierdzam po wpłacie zadatku w wysokości 50% ceny rytuału.');
+    lines.push('Zadatek można wpłacić tutaj (wybieramy rytuał i wpisujemy termin ' + a.day.slice(8, 10) + '.' + a.day.slice(5, 7) + '): https://twojecialotwojdobrostan.pl/produkt/zadatek-za-wizyte/');
+    const payBy = o.payBy || payByDefault(a.day);
+    lines.push('Proszę o wpłatę ' + (payBy <= todayPL() ? 'jeszcze dzisiaj' : 'do ' + longDay(payBy)) + '. Bez niej będę musiała zwolnić termin dla innej osoby.');
+    lines.push('Zadatek zaliczę w całości na poczet ceny rytuału. Zgodnie z regulaminem nie podlega zwrotowi: jeśli wizyta zostanie odwołana i nie odbędzie się z ' + P + ' strony, zadatek przepada.');
+    lines.push('Pełne zasady: twojecialotwojdobrostan.pl/regulamin-wizyt');
+    lines.push('Wiem, że życie czasem układa plany po swojemu, i nie biorę tego do siebie. Zależy mi po prostu, żeby każdy termin w studiu mógł komuś posłużyć. Cieszę się na nasze spotkanie.');
+    lines.push('Z troską o Twój Dobrostan,\nJustyna');
+    return lines.join('\n');
   }
   const smsParts = (t) => t.length <= 160 ? 1 : Math.ceil(t.length / 153);
   let risks = [];
@@ -262,10 +343,18 @@
     if (location.hash === '#ostrzezenia' && open.length) { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
   }
 
+  // Zapamiętany zwrot do osoby (np. „Pani Iwonko”), żeby nie poprawiać go drugi raz
+  const greetKey = (a) => 'zwrot:' + (a.card_id || risk_phone(a.phone));
+  const risk_phone = (p) => String(p || '').replace(/\D/g, '').slice(-9);
+  const greetGet = (a) => { try { return localStorage.getItem(greetKey(a)) || ''; } catch (e) { return ''; } };
+  const greetSet = (a, v) => { try { localStorage.setItem(greetKey(a), v); } catch (e) { /* bez pamięci */ } };
+
   function openRiskSms(a) {
     if (!a) return;
-    let pani = guessPani(a.name), edited = false;
+    const saved = greetGet(a);
+    let pani = saved ? /^pani\b/i.test(saved) : guessPani(a.name), edited = false;
     const night = () => { const h = +new Date().toLocaleTimeString('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Europe/Warsaw' }); return h >= 21 || h < 8; };
+    const payMax = a.day && a.day > todayPL() ? a.day : todayPL();
     openSheet(`${bar('SMS o zadatku')}
       <p class="lead" style="margin-top:-8px">${esc(a.name)} · ${esc(smsWhen(a.day, a.visit_at))}</p>
       <form class="panel" id="rsForm" novalidate>
@@ -274,35 +363,56 @@
           <label class="check" style="flex:1"><input type="radio" name="rsForm" value="pani" ${pani ? 'checked' : ''}> <span>Pani</span></label>
           <label class="check" style="flex:1"><input type="radio" name="rsForm" value="pan" ${pani ? '' : 'checked'}> <span>Pan</span></label>
         </div>
-        <div class="field"><label for="rsText">Treść SMS-a (możesz ją zmienić)</label><textarea class="input" id="rsText" rows="9" maxlength="${SMS_MAX}"></textarea></div>
+        <div class="field"><label for="rsGreet">Jak się zwracam (po „Dzień dobry”)</label><input class="input" id="rsGreet" maxlength="40" value="${esc(saved || greetFor(a.name, pani))}"></div>
+        <div class="field"><label for="rsExtra">Osobiste zdanie (nieobowiązkowe)</label><input class="input" id="rsExtra" maxlength="120" placeholder="np. Życzę szybkiego powrotu do zdrowia."></div>
+        <div class="field"><label for="rsPay">Zadatek do</label><input class="input" id="rsPay" type="date" style="min-width:0;width:100%" min="${todayPL()}" max="${payMax}" value="${payByDefault(a.day)}"></div>
+        <div class="field"><label for="rsText">Treść wiadomości (możesz ją zmienić)</label><textarea class="input" id="rsText" rows="14"></textarea></div>
         <span class="small" id="rsCount" style="margin-top:-6px"></span>
-        <p class="small" style="margin:0">SMS wyjdzie z nazwy TwojeCialo na numer <b>${esc(a.phone || 'brak numeru')}</b>, dopiero gdy klikniesz „Wyślij SMS” i potwierdzisz.</p>
-        <p class="error" id="rsNight" role="status" ${night() ? '' : 'hidden'} style="margin:0">Jest pora ciszy nocnej (21:00–8:00). Możesz też wysłać SMS rano.</p>
+        <p class="error" id="rsNight" role="status" ${night() ? '' : 'hidden'} style="margin:0">Jest pora ciszy nocnej (21:00–8:00). Możesz też wysłać wiadomość rano.</p>
         <p class="error" id="rsErr" role="alert" hidden></p>
-        <button class="btn btn--gold" type="submit" id="rsSend" ${a.phone ? '' : 'disabled'}>Wyślij SMS</button>
-        ${a.phone ? `<a class="btn btn--ghost btn--sm" id="rsPhone" href="#">Wolę wysłać z mojego telefonu</a>` : ''}
+        ${a.phone ? `<a class="btn btn--gold" id="rsPhone" href="#">Wyślij z mojego telefonu</a>
+        <p class="small" style="margin:0">Otworzy się SMS w Twoim telefonie z gotową treścią, z polskimi literami, na numer <b>${esc(a.phone)}</b>.</p>` : '<p class="small" style="margin:0">Brak numeru telefonu tej osoby.</p>'}
+        <button class="btn btn--ghost btn--sm" type="submit" id="rsSend" ${a.phone ? '' : 'disabled'}>Wyślij przez bramkę SMS (TwojeCialo)</button>
+        <p class="small" id="rsGate" style="margin:0"></p>
       </form>`);
     const ta = $('#rsText');
     const count = () => {
-      const n = ta.value.trim().length;
-      $('#rsCount').textContent = n + ' / ' + SMS_MAX + ' znaków · ' + smsParts(ta.value.trim()) + ' ' + UI.plural(smsParts(ta.value.trim()), 'SMS', 'SMS-y', 'SMS-ów');
+      const t = ta.value.trim(), n = t.length;
+      $('#rsCount').textContent = n + ' znaków';
       const ph = $('#rsPhone');
-      if (ph) ph.setAttribute('href', 'sms:' + a.phone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(ta.value.trim()));
+      if (ph) ph.setAttribute('href', 'sms:' + a.phone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(t));
+      const tooLong = n > SMS_MAX;
+      $('#rsSend').disabled = !a.phone || tooLong;
+      $('#rsGate').textContent = tooLong
+        ? 'Przez bramkę SMS da się wysłać najwyżej ' + SMS_MAX + ' znaków (bez polskich liter), więc ta dłuższa wiadomość idzie z Twojego telefonu.'
+        : 'Bramka wyśle ' + smsParts(t) + ' ' + UI.plural(smsParts(t), 'SMS', 'SMS-y', 'SMS-ów') + ' z nazwy TwojeCialo, bez polskich liter, dopiero gdy potwierdzisz.';
     };
-    const fill = () => { ta.value = riskSms(a, pani); count(); };
+    const opts = () => ({ greet: $('#rsGreet').value.trim(), extra: $('#rsExtra').value, payBy: $('#rsPay').value });
+    const fill = () => { ta.value = riskSms(a, pani, opts()); count(); };
     fill();
     ta.addEventListener('input', () => { edited = true; count(); });
+    const refill = async () => {
+      if (edited && !(await UI.ask('Ułożyć treść od nowa? Twoje ręczne zmiany w treści zostaną zastąpione.', 'Ułóż od nowa'))) return false;
+      edited = false; fill(); return true;
+    };
+    ['rsGreet', 'rsExtra', 'rsPay'].forEach((id) => $('#' + id).addEventListener('change', refill));
+    $('#rsGreet').addEventListener('input', () => { if (!edited) fill(); });
+    $('#rsExtra').addEventListener('input', () => { if (!edited) fill(); });
     sheetIn.querySelectorAll('input[name="rsForm"]').forEach((r) => r.addEventListener('change', async () => {
       const next = r.value === 'pani';
       if (next === pani) return;
-      if (edited && !(await UI.ask('Zmienić zwrot? Twoje zmiany w treści zostaną zastąpione nowym tekstem.', 'Zmień'))) {
-        sheetIn.querySelector('input[name="rsForm"][value="' + (pani ? 'pani' : 'pan') + '"]').checked = true; return;
+      const prev = pani; pani = next;
+      $('#rsGreet').value = greetFor(a.name, pani);
+      if (!(await refill())) {
+        pani = prev; $('#rsGreet').value = greetFor(a.name, pani);
+        sheetIn.querySelector('input[name="rsForm"][value="' + (pani ? 'pani' : 'pan') + '"]').checked = true;
       }
-      pani = next; edited = false; fill();
     }));
+    const remember = () => { const g = $('#rsGreet').value.trim(); if (g && g !== greetFor(a.name, pani)) greetSet(a, g); };
     const ph = $('#rsPhone');
     if (ph) ph.addEventListener('click', async (e) => {
-      if (!(await UI.ask('Otworzę SMS w Twoim telefonie. Po wysłaniu oznaczę ostrzeżenie jako załatwione.', 'Otwórz'))) { e.preventDefault(); return; }
+      if (!(await UI.ask('Otworzę SMS w Twoim telefonie z gotową treścią. Po wysłaniu oznaczę ostrzeżenie jako załatwione.', 'Otwórz'))) { e.preventDefault(); return; }
+      remember();
       Api.riskAlertDismiss(a.id).catch(() => {});
       setTimeout(() => { closeSheet(); loadRisks(); }, 300);
     });
@@ -311,10 +421,12 @@
       const text = ta.value.trim();
       const err = $('#rsErr'); err.hidden = true;
       if (text.length < 10) { err.textContent = 'Wpisz treść SMS-a.'; err.hidden = false; return; }
+      if (text.length > SMS_MAX) { err.textContent = 'Ta wiadomość jest za długa dla bramki SMS. Wyślij ją ze swojego telefonu.'; err.hidden = false; return; }
       if (!(await UI.ask('Wysłać ten SMS do: ' + a.name + ' (' + a.phone + ')?', 'Wyślij'))) return;
       const btn = $('#rsSend'); btn.disabled = true;
       try {
         const r = await Api.riskAlertSms(a.id, text);
+        remember();
         closeSheet(); loadRisks();
         toast(r && r.demo ? 'Tryb pokazowy: SMS nie został naprawdę wysłany.' : 'SMS wysłany do: ' + a.name + '.');
       } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
