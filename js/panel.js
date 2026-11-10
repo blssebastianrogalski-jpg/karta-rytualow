@@ -165,7 +165,7 @@
   let gaps = [], forecast = null, gapChannel = 'both';
   const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
   const bigDay = (d) => d === Rules.dayPL(0) ? 'Dziś' : d === Rules.dayPL(1) ? 'Jutro' : dateLabel(d).replace(/^./, (ch) => ch.toUpperCase());
-  // Ostrzeżenie: SMSPLANET odrzuca SMS-y (np. brak środków)
+  // Ostrzeżenie: SMS-y nie wychodzą (SMSPLANET bez środków albo problem z telefonem studia)
   async function loadSmsAlert() {
     const box = $('#smsAlert');
     let a = null;
@@ -173,10 +173,11 @@
     if (!box) return;
     if (!a || !a.n) { box.innerHTML = ''; return; }
     const when = new Date(a.last_at).toLocaleString('pl-PL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+    const phone = /^Telefon studia/.test(a.error || '');
     box.innerHTML = `<div class="hint hint--error" style="display:flex;flex-direction:column;gap:10px">
-      <span><span class="strong">SMS-y nie wychodzą.</span> Przez ostatnią dobę SMSPLANET odrzucił ${a.n} ${UI.plural(a.n, 'SMS', 'SMS-y', 'SMS-ów')} (ostatnio ${esc(when)})${a.error ? ': ' + esc(a.error) : ''}.${/środk/i.test(a.error || '') ? '' : ' Najczęściej to brak środków.'} Klientki z aplikacją dostały push.</span>
+      <span><span class="strong">SMS-y nie wychodzą.</span> Przez ostatnią dobę ${a.n} ${UI.plural(a.n, 'SMS nie wyszedł', 'SMS-y nie wyszły', 'SMS-ów nie wyszło')} (ostatnio ${esc(when)})${a.error ? ': ' + esc(a.error) : ''}.${phone ? ' Sprawdź, czy telefon studia ma internet i czy aplikacja SMS Gateway jest włączona (Online).' : /środk/i.test(a.error || '') ? '' : ' Najczęściej to brak środków w SMSPLANET.'} Klientki z aplikacją dostały push.</span>
       <span style="display:flex;gap:8px;flex-wrap:wrap">
-        <a class="btn btn--line btn--sm" href="https://panel.smsplanet.pl/" target="_blank" rel="noopener">Doładuj SMSPLANET</a>
+        ${phone ? '' : '<a class="btn btn--line btn--sm" href="https://panel.smsplanet.pl/" target="_blank" rel="noopener">Doładuj SMSPLANET</a>'}
         <button class="btn btn--ghost btn--sm" id="smsAlertHide">Ukryj</button>
       </span>
     </div>`;
@@ -191,7 +192,8 @@
   const INC_KIND = { cancel: 'odwołanie ponad 24 h przed', late: 'odwołanie później niż 24 h przed', noshow: 'nie przyszła' };
   const INC_SRC = { booksy: 'Booksy', app: 'aplikacja', panel: 'panel', manual: 'wpis ręczny' };
   const RISK_SRC = { booksy: 'rezerwacja w Booksy', app: 'prośba o termin w aplikacji', plan: 'wpis w planie' };
-  const SMS_MAX = 459;
+  const VIA_PHONE = CFG.SMS_VIA === 'telefon';
+  const SMS_MAX = VIA_PHONE ? 1530 : 459;
   const NUM_WORD = { 2: 'dwie', 3: 'trzy', 4: 'cztery' };
   const shortDay = (iso) => new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'numeric', timeZone: 'Europe/Warsaw' });
   const incLine = (l) => (l || []).map((i) => shortDay(i.at) + ' (' + (INC_KIND[i.kind] || i.kind).replace('odwołanie później niż 24 h przed', 'późne odwołanie').replace('odwołanie ponad 24 h przed', 'odwołanie') + ')').join(', ');
@@ -304,7 +306,8 @@
     lines.push('Z troską o Twój Dobrostan,\nJustyna');
     return lines.join('\n');
   }
-  const smsParts = (t) => t.length <= 160 ? 1 : Math.ceil(t.length / 153);
+  // Z polskimi literami część SMS ma 70 znaków (dłuższy SMS: po 67), bez nich 160 (po 153).
+  const smsParts = (t) => { const pl = VIA_PHONE && /[^\x00-\x7F]/.test(t); const one = pl ? 70 : 160, part = pl ? 67 : 153; return t.length <= one ? 1 : Math.ceil(t.length / part); };
   let risks = [];
   async function loadRisks() {
     const box = $('#risks');
@@ -372,7 +375,7 @@
         <p class="error" id="rsErr" role="alert" hidden></p>
         ${a.phone ? `<a class="btn btn--gold" id="rsPhone" href="#">Wyślij z mojego telefonu</a>
         <p class="small" style="margin:0">Otworzy się SMS w Twoim telefonie z gotową treścią, z polskimi literami, na numer <b>${esc(a.phone)}</b>.</p>` : '<p class="small" style="margin:0">Brak numeru telefonu tej osoby.</p>'}
-        <button class="btn btn--ghost btn--sm" type="submit" id="rsSend" ${a.phone ? '' : 'disabled'}>Wyślij przez bramkę SMS (TwojeCialo)</button>
+        <button class="btn btn--ghost btn--sm" type="submit" id="rsSend" ${a.phone ? '' : 'disabled'}>${VIA_PHONE ? 'Wyślij automatycznie z numeru studia' : 'Wyślij przez bramkę SMS (TwojeCialo)'}</button>
         <p class="small" id="rsGate" style="margin:0"></p>
       </form>`);
     const ta = $('#rsText');
@@ -383,9 +386,13 @@
       if (ph) ph.setAttribute('href', 'sms:' + a.phone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(t));
       const tooLong = n > SMS_MAX;
       $('#rsSend').disabled = !a.phone || tooLong;
-      $('#rsGate').textContent = tooLong
-        ? 'Przez bramkę SMS da się wysłać najwyżej ' + SMS_MAX + ' znaków (bez polskich liter), więc ta dłuższa wiadomość idzie z Twojego telefonu.'
-        : 'Bramka wyśle ' + smsParts(t) + ' ' + UI.plural(smsParts(t), 'SMS', 'SMS-y', 'SMS-ów') + ' z nazwy TwojeCialo, bez polskich liter, dopiero gdy potwierdzisz.';
+      $('#rsGate').textContent = VIA_PHONE
+        ? (tooLong
+          ? 'Automatycznie da się wysłać najwyżej ' + SMS_MAX + ' znaków, więc ta dłuższa wiadomość idzie z Twojego telefonu.'
+          : 'Telefon studia wyśle ' + smsParts(t) + ' ' + UI.plural(smsParts(t), 'część', 'części', 'części') + ' SMS z numeru ' + CFG.PHONE + ', z polskimi literami, dopiero gdy potwierdzisz.')
+        : (tooLong
+          ? 'Przez bramkę SMS da się wysłać najwyżej ' + SMS_MAX + ' znaków (bez polskich liter), więc ta dłuższa wiadomość idzie z Twojego telefonu.'
+          : 'Bramka wyśle ' + smsParts(t) + ' ' + UI.plural(smsParts(t), 'SMS', 'SMS-y', 'SMS-ów') + ' z nazwy TwojeCialo, bez polskich liter, dopiero gdy potwierdzisz.');
     };
     const opts = () => ({ greet: $('#rsGreet').value.trim(), extra: $('#rsExtra').value, payBy: $('#rsPay').value });
     const fill = () => { ta.value = riskSms(a, pani, opts()); count(); };
@@ -421,7 +428,7 @@
       const text = ta.value.trim();
       const err = $('#rsErr'); err.hidden = true;
       if (text.length < 10) { err.textContent = 'Wpisz treść SMS-a.'; err.hidden = false; return; }
-      if (text.length > SMS_MAX) { err.textContent = 'Ta wiadomość jest za długa dla bramki SMS. Wyślij ją ze swojego telefonu.'; err.hidden = false; return; }
+      if (text.length > SMS_MAX) { err.textContent = 'Ta wiadomość jest za długa do automatycznej wysyłki. Wyślij ją ze swojego telefonu.'; err.hidden = false; return; }
       if (!(await UI.ask('Wysłać ten SMS do: ' + a.name + ' (' + a.phone + ')?', 'Wyślij'))) return;
       const btn = $('#rsSend'); btn.disabled = true;
       try {
@@ -520,7 +527,7 @@
     });
     upd();
   }
-  // Po odwołaniu: SMS automatycznie przez SMSPLANET albo tylko push (SMS-y z mojego telefonu)
+  // Po odwołaniu: SMS automatycznie (telefon studia albo SMSPLANET) albo tylko push (SMS-y z mojego telefonu)
   async function loadGapAuto() {
     const box = $('#gapAuto');
     if (!box) return;
@@ -529,10 +536,10 @@
     box.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)">
       <span class="eyebrow">SMS po odwołaniu wizyty</span>
       <div class="tabs tabs--small" role="radiogroup" aria-label="SMS po odwołaniu wizyty">
-        <button role="radio" data-auto="1" aria-selected="${on}">Sam (SMSPLANET)</button>
+        <button role="radio" data-auto="1" aria-selected="${on}">${VIA_PHONE ? 'Sam (z numeru studia)' : 'Sam (SMSPLANET)'}</button>
         <button role="radio" data-auto="0" aria-selected="${!on}">Z mojego telefonu</button>
       </div>
-      <span class="small">${on ? 'Push i SMS wychodzą same, SMS-y z kredytów SMSPLANET.' : 'Sam wychodzi tylko push. SMS-y wyślesz z telefonu: „SMS z mojego telefonu” przy wysłanej ofercie.'}</span>
+      <span class="small">${on ? (VIA_PHONE ? 'Push i SMS wychodzą same, SMS-y z karty SIM telefonu studia.' : 'Push i SMS wychodzą same, SMS-y z kredytów SMSPLANET.') : 'Sam wychodzi tylko push. SMS-y wyślesz z telefonu: „SMS z mojego telefonu” przy wysłanej ofercie.'}</span>
     </div>`;
     box.querySelectorAll('[data-auto]').forEach((b) => b.addEventListener('click', async () => {
       try { await Api.gapSmsAutoSet(b.dataset.auto === '1'); loadGapAuto(); } catch (e) { toast(e.message); }

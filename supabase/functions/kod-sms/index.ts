@@ -1,8 +1,8 @@
 // Logowanie klientki do karty kodem SMS. Klientka wpisuje numer telefonu z karty,
 // dostaje SMS z kodem, a po wpisaniu kodu aplikacja zapamiętuje jej kartę.
-// Wysyłka przez SMSPLANET (api2.smsplanet.pl). Limity i kody pilnuje baza (logowanie-sms.sql).
+// Wysyłka z telefonu studia (SMS Gateway for Android) albo przez SMSPLANET. Limity i kody pilnuje baza (logowanie-sms.sql).
 // Ustawienia funkcji: Verify JWT wyłączone (klientka nie jest zalogowana).
-// Wymaga sekretów: SMSPLANET_TOKEN (token API z panelu SMSPLANET) i SMSPLANET_FROM (zaakceptowana nazwa nadawcy).
+// Sekrety: SMSGATE_USER + SMSGATE_PASS (telefon studia) albo SMSPLANET_TOKEN + SMSPLANET_FROM; wybór: SMS_PROVIDER.
 //
 // Body (POST):
 //   { action: "send", phone }          → { ok: true }  (ta sama odpowiedź, gdy numeru nie ma na żadnej karcie)
@@ -31,13 +31,37 @@ function newCode(): string {
   return String(n[0] % 1000000).padStart(6, "0");
 }
 
+// Dwie drogi wysyłki, tak samo jak w funkcji sms-wyslij (sekret SMS_PROVIDER):
+// „telefon” = karta SIM telefonu studia (SMSGATE_USER, SMSGATE_PASS), „smsplanet” = SMSPLANET (SMSPLANET_TOKEN, SMSPLANET_FROM).
+function provider(): "telefon" | "smsplanet" {
+  const p = (Deno.env.get("SMS_PROVIDER") || "").trim().toLowerCase();
+  if (p === "smsplanet") return "smsplanet";
+  if (p === "telefon") return "telefon";
+  return Deno.env.get("SMSGATE_USER") && Deno.env.get("SMSGATE_PASS") ? "telefon" : "smsplanet";
+}
+
 async function sendSms(phone9: string, code: string) {
+  const msg = `Twój kod do karty rytuałów: ${code}. Kod jest ważny 10 minut. Twoje Ciało Twój Dobrostan`;
+  if (provider() === "telefon") {
+    const user = Deno.env.get("SMSGATE_USER"), pass = Deno.env.get("SMSGATE_PASS");
+    if (!user || !pass) throw new Error("Telefon studia: brak sekretów SMSGATE_USER i SMSGATE_PASS w Supabase.");
+    // priority 100 = kod wychodzi od razu, z pominięciem odstępów między SMS-ami; po 10 minutach kod i tak wygasa.
+    const r = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
+      method: "POST",
+      headers: { Authorization: "Basic " + btoa(`${user}:${pass}`), "Content-Type": "application/json" },
+      body: JSON.stringify({ textMessage: { text: msg }, phoneNumbers: ["+48" + phone9], ttl: 600, priority: 100 }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data || !data.id) throw new Error(`Telefon studia: ${(data && (data.message || data.error)) || r.status}`);
+    return;
+  }
   const token = Deno.env.get("SMSPLANET_TOKEN");
   if (!token) throw new Error("Brak sekretu SMSPLANET_TOKEN w Supabase.");
   const form = new URLSearchParams({
     from: Deno.env.get("SMSPLANET_FROM") || "TEST",
     to: "48" + phone9,
-    msg: `Twój kod do karty rytuałów: ${code}. Kod jest ważny 10 minut. Twoje Ciało Twój Dobrostan`,
+    msg,
     clear_polish: "1", // bez polskich znaków: SMS mieści się w jednej wiadomości
   });
   const r = await fetch("https://api2.smsplanet.pl/sms", {
