@@ -49,7 +49,7 @@ async function sendSms(phone9: string, code: string) {
     const r = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
       method: "POST",
       headers: { Authorization: "Basic " + btoa(`${user}:${pass}`), "Content-Type": "application/json" },
-      body: JSON.stringify({ textMessage: { text: msg }, phoneNumbers: ["+48" + phone9], ttl: 600, priority: 100 }),
+      body: JSON.stringify({ textMessage: { text: msg }, phoneNumbers: ["+48" + phone9], ttl: 600, priority: 100, withDeliveryReport: false }),
       signal: AbortSignal.timeout(20000),
     });
     const data = await r.json().catch(() => null);
