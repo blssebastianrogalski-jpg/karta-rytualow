@@ -46,7 +46,7 @@ async function viaPhone(to: string, msg: string): Promise<string> {
   const r = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
     method: "POST",
     headers: { Authorization: "Basic " + btoa(`${user}:${pass}`), "Content-Type": "application/json" },
-    body: JSON.stringify({ textMessage: { text: msg }, phoneNumbers: ["+" + to], ttl: 6 * 3600, withDeliveryReport: false }),
+    body: JSON.stringify({ textMessage: { text: msg }, phoneNumbers: ["+" + to], ttl: 6 * 3600, withDeliveryReport: false, simNumber: Number(Deno.env.get("SMSGATE_SIM") || "1") }),
     signal: AbortSignal.timeout(20000),
   });
   const data = await r.json().catch(() => null);
