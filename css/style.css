@@ -129,7 +129,12 @@ textarea.input { padding: 12px 14px; min-height: 80px; resize: vertical; }
 
 /* Dolne menu */
 .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--surface); border-top: 1px solid var(--line); padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
-.nav__in { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.nav__in { max-width: 520px; margin: 0 auto; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.nav--5 .nav__in { gap: 0; }
+.nav--5 button { letter-spacing: .03em; font-size: 10.5px; }
+.pkg-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.pkg-dot { aspect-ratio: 1; border-radius: 50%; border: 1px dashed var(--line); display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--faint); max-width: 52px; justify-self: center; width: 100%; }
+.pkg-dot--on { border: 1px solid var(--gold); background: var(--gold); color: var(--on-gold); font-weight: 600; }
 .nav button { min-height: 58px; border: none; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 .nav button[aria-current="page"] { color: var(--gold); }
 .nav svg { width: 23px; height: 23px; }

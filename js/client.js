@@ -11,6 +11,8 @@
   let gaps = [];           // wolne terminy po odwołaniu albo z grafiku (kto pierwszy, ten lepszy)
   let gapPick = null;      // wybrana godzina z wolnego terminu: { id, at, max }
   let screen = 'card';
+  let allVisits = null;    // cała historia wizyt (zakładki „Moje rytuały” i „Pakiet”)
+  let pushOn = null;       // czy ten telefon ma zapisaną subskrypcję powiadomień (null = nie wiem)
   let poll = null;
   let installEvt = null;
   // Karta działa tylko jako aplikacja z ikony na ekranie telefonu. W przeglądarce pokazujemy instrukcję instalacji.
@@ -96,9 +98,10 @@
     }
     if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
     // zgoda już jest, a subskrypcja mogła zniknąć (wylogowanie, ponowna instalacja), więc odnawiam ją po cichu
-    if (pushSupported() && Notification.permission === 'granted') subscribePush(true);
+    if (pushSupported() && Notification.permission === 'granted') subscribePush(true).then(checkPush);
+    else checkPush();
     if (linkToken) toast('Witaj, ' + firstName() + '! Twoja karta jest już w aplikacji.');
-    await Promise.all([loadRequests(), loadGaps()]);
+    await Promise.all([loadRequests(), loadGaps(), loadVisits()]);
     loadPromos();
     go(location.hash.replace('#', '') || 'card');
   }
@@ -354,7 +357,8 @@
   function go(name) {
     if (name === 'qr') name = 'promo'; // stare linki do „Mój kod”
     const toGap = name === 'wolne';    // powiadomienie o wolnym terminie
-    if (!['card', 'bday', 'promo', 'req'].includes(name)) name = 'card';
+    if (name === 'pakiet' && !packages().length) name = 'rytualy';
+    if (!['card', 'bday', 'promo', 'req', 'rytualy', 'pakiet'].includes(name)) name = 'card';
     screen = name;
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
     nav.hidden = false;
@@ -373,6 +377,8 @@
     if (screen === 'bday') return renderBday();
     if (screen === 'promo') return renderPromo();
     if (screen === 'req') return renderRequest();
+    if (screen === 'rytualy') return renderRituals();
+    if (screen === 'pakiet') return renderPackage();
     return renderCard(animate);
   }
 
@@ -391,9 +397,9 @@
     const pushBox = pushOffer ? '<section class="panel panel--gold" style="gap:10px" aria-label="Powiadomienia"><span class="strong" style="font-size:17px">Włącz powiadomienia</span><span class="small" style="color:var(--text-2)">Dostaniesz przypomnienie o wizycie, nowej pieczątce i prezencie urodzinowym −20%. Po stuknięciu telefon zapyta o zgodę: wybierz <b>Zezwól</b>.</span><button class="btn btn--gold" id="pushBtn">Włącz powiadomienia</button></section>'
       : STANDALONE && IOS && CFG.PUSH_PUBLIC_KEY && !('PushManager' in window) ? '<div class="hint">Powiadomienia na iPhonie działają od iOS 16.4. Zaktualizuj system w Ustawieniach, a potem otwórz kartę z ikony.</div>' : '';
     const consentBox = !consentAsked() && card.phone && myConsent === false ? `<section class="panel" style="gap:10px" aria-label="Zgoda na SMS"><span class="small">${esc(CONSENT_TEXT)}</span><div class="btn-row"><button class="btn btn--ghost btn--sm" id="consentNo">Nie, dziękuję</button><button class="btn btn--gold btn--sm" id="consentYes">Zgadzam się</button></div></section>` : '';
-    const pushBlocked = CFG.PUSH_PUBLIC_KEY && 'Notification' in window && Notification.permission === 'denied';
-    if (pushBlocked) install += '<div class="install"><img src="img/mark-96.png" alt="" width="40" height="40"><span>Nie dostajesz przypomnień? Odblokuj powiadomienia: stuknij ikonę kłódki przy adresie, potem <b>Uprawnienia</b> → <b>Powiadomienia</b> → <b>Zezwól</b>.</span></div>';
-    const visits = (card.visits || []).slice(0, 5);
+    const visits = Rules.rituals(allVisits || card.visits).slice(0, 3);
+    const pkg = packages()[0];
+    const pkgTile = pkg && !pkg.done ? `<button class="panel panel--gold" data-go="pakiet" style="text-align:left;color:inherit;cursor:pointer;gap:4px"><span class="eyebrow eyebrow--gold">Twój pakiet${pkg.service && !pkg.fromShop ? ' · ' + esc(cleanService(pkg.service)) : ''}</span><span class="strong" style="font-size:17px">${pkgHead(pkg)} →</span></button>` : '';
     const upcoming = card.upcoming || [];
     const viaBooksy = upcoming.filter((u) => !u.own).length;
     const next = upcoming.length ? `<section class="panel" style="gap:6px" aria-label="Najbliższa wizyta">
@@ -434,6 +440,7 @@
         <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span></div>
         ${card.cards_completed ? '<span class="small">Ukończone karty: ' + card.cards_completed + '. Dziękuję, że jesteś!</span>' : ''}
       </section>
+      ${pkgTile}
       ${next}
       ${reqBox}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
@@ -442,9 +449,10 @@
       ${tiles}
       ${install}
       ${review}
-      ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
+      ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie rytuały</span><div class="panel panel--tight">${visits.map(ritualRow).join('')}</div><button class="btn btn--ghost btn--sm" data-go="rytualy">Wszystkie moje rytuały →</button></section>` : ''}
       ${refer}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
+      ${pushStatusBox()}
       <p class="small center">${esc(CFG.ADDRESS)} · <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>
       ${myConsent !== null && !consentBox ? `<label class="check"><input type="checkbox" id="qConsent" ${myConsent ? 'checked' : ''}> <span>${esc(CONSENT_TEXT)}</span></label>` : ''}
       <p class="small center">Numer karty: <span class="strong">${esc(card.code)}</span>. Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
@@ -463,8 +471,9 @@
     if (rb) rb.addEventListener('click', shareInvite);
     const gw = $('#gwalletBtn');
     if (gw) gw.addEventListener('click', addToGoogleWallet);
-    const bb = main.querySelector('button[data-go]');
-    if (bb) bb.addEventListener('click', () => go('bday'));
+    main.querySelectorAll('button[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
+    const pb2 = $('#pushBtn2');
+    if (pb2) pb2.addEventListener('click', enablePush);
     $('#reqBtn').addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); });
     main.querySelectorAll('[data-visit-cancel]').forEach((b) => b.addEventListener('click', () => cancelVisit(+b.dataset.visitCancel)));
     main.querySelectorAll('[data-visit-move]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = +b.dataset.visitMove; go('req'); }));
@@ -746,6 +755,7 @@
       if (perm !== 'granted') { UI.toast('Powiadomienia wyłączone. Możesz je włączyć później w ustawieniach telefonu.'); return render(); }
       await subscribePush();
     } catch (e) { UI.toast('Nie udało się włączyć powiadomień.'); }
+    await checkPush();
     render();
   }
   async function subscribePush(quiet) {
@@ -755,6 +765,105 @@
       await Api.savePushSubscription(CardStore.get(), sub.toJSON());
       if (!quiet) UI.toast('Powiadomienia włączone.');
     } catch (e) { if (!quiet) throw e; }
+  }
+
+  // Stan powiadomień na tym telefonie: zgoda systemu + zapisana subskrypcja.
+  async function checkPush() {
+    try {
+      if (!pushSupported() || Notification.permission !== 'granted') { pushOn = false; return; }
+      const reg = await navigator.serviceWorker.ready;
+      pushOn = !!(await reg.pushManager.getSubscription());
+    } catch (e) { pushOn = null; }
+  }
+  // Ramka na dole karty: zawsze widać, czy powiadomienia działają, i jak je włączyć ponownie.
+  function pushStatusBox() {
+    if (!CFG.PUSH_PUBLIC_KEY || !STANDALONE) return '';
+    const head = (txt) => `<span class="eyebrow">Powiadomienia na tym telefonie</span><span class="strong">${txt}</span>`;
+    if (!('Notification' in window) || !('PushManager' in window)) {
+      return IOS ? `<section class="panel" style="gap:8px">${head('Niedostępne')}<span class="small">Powiadomienia na iPhonie działają od iOS 16.4. Zaktualizuj system w <b>Ustawieniach</b>, a potem otwórz kartę z ikony.</span></section>` : '';
+    }
+    const perm = Notification.permission;
+    if (perm === 'granted' && pushOn !== false) return `<section class="panel" style="gap:6px">${head('<span class="gold">Włączone ✓</span>')}<span class="small">Dostaniesz przypomnienie o wizycie, nowej pieczątce i prezencie urodzinowym.</span></section>`;
+    if (perm === 'denied') {
+      const how = IOS
+        ? 'Otwórz <b>Ustawienia</b> iPhone’a → <b>Powiadomienia</b> → na liście aplikacji stuknij <b>Karta rytuałów</b> (nazwa ikony karty) → włącz <b>Zezwalaj na powiadomienia</b>. Potem wróć do karty.'
+        : 'Przytrzymaj ikonę karty na ekranie telefonu → <b>Informacje o aplikacji</b> (ⓘ) → <b>Powiadomienia</b> → włącz. Potem wróć do karty.';
+      return `<section class="panel" style="gap:8px">${head('Wyłączone')}<span class="small">Telefon blokuje powiadomienia z karty, więc nie przypomnę Ci o wizycie ani o prezencie urodzinowym. Aby je włączyć ponownie:</span><span class="small">${how}</span></section>`;
+    }
+    if (perm === 'default' && pushSupported()) return ''; // na górze karty jest już przycisk „Włącz powiadomienia”
+    return `<section class="panel" style="gap:8px">${head('Wyłączone')}<span class="small">Po stuknięciu telefon zapyta o zgodę: wybierz <b>Zezwól</b>.</span><button class="btn btn--gold btn--sm" id="pushBtn2">Włącz powiadomienia</button></section>`;
+  }
+
+  // ---------- moje rytuały i pakiet ----------
+  async function loadVisits() {
+    try { allVisits = await Api.myVisits(CardStore.get()); }
+    catch (e) { allVisits = allVisits || null; } // bez nowej funkcji w bazie: ostatnie wizyty z karty
+    navTabs();
+  }
+  const packages = () => Rules.packages(allVisits || (card && card.visits) || []);
+  function navTabs() {
+    const b = nav.querySelector('[data-go="pakiet"]');
+    if (b) b.hidden = !packages().length;
+    nav.classList.toggle('nav--5', !!b && !b.hidden);
+  }
+  const dayFmt = (iso) => new Intl.DateTimeFormat('pl-PL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Warsaw' }).format(new Date(iso));
+  const monthFmt = (iso) => { const s = new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric', timeZone: 'Europe/Warsaw' }).format(new Date(iso)); return s.charAt(0).toUpperCase() + s.slice(1); };
+  function ritualName(v) {
+    if (v.service && !/\d+\s*wizyt/i.test(v.service)) return cleanService(v.service);
+    return v.kind === 'birthday' ? 'Rytuał urodzinowy' : v.kind === 'package_visit' || v.kind === 'package_buy' ? 'Rytuał z pakietu' : 'Rytuał';
+  }
+  function ritualTags(v) {
+    return (v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : '')
+      + (v.kind === 'package_buy' ? ' <span class="tag">zakup pakietu</span>' : '')
+      + (v.kind === 'birthday' ? ' <span class="tag tag--solid">urodziny −20%</span>' : v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : '');
+  }
+  function ritualRow(v) { return `<div class="list-row"><span>${esc(ritualName(v))}${ritualTags(v)}</span><span>${UI.fmtShort(v.created_at)}</span></div>`; }
+  function pkgHead(p) {
+    const n = p.used.length;
+    return p.size ? `Wykorzystane ${n} z ${p.size}` + (p.done ? '' : ` · ${UI.plural(p.left, 'został', 'zostały', 'zostało')} ${p.left}`) : `Wykorzystane: ${n} ${UI.plural(n, 'rytuał', 'rytuały', 'rytuałów')}`;
+  }
+
+  function renderRituals() {
+    const list = Rules.rituals(allVisits || card.visits);
+    let body;
+    if (!list.length) body = '<section class="panel" style="gap:6px"><span class="strong">Tu pojawią się Twoje rytuały</span><span class="small">Po każdej wizycie zapiszę ją na Twojej karcie, a tutaj zobaczysz datę i rodzaj rytuału.</span></section>';
+    else {
+      const groups = [];
+      list.forEach((v) => { const m = monthFmt(v.created_at); const g = groups[groups.length - 1]; if (g && g.m === m) g.items.push(v); else groups.push({ m, items: [v] }); });
+      const first = list[list.length - 1];
+      body = `<section class="panel" style="gap:10px">
+          <div class="row"><span class="small" style="font-size:14px">Odbyte rytuały</span><span class="strong gold">${list.length}</span></div>
+          <div class="row"><span class="small" style="font-size:14px">Pierwszy na karcie</span><span class="strong">${esc(UI.fmtDate(first.created_at))}</span></div>
+        </section>
+        ${groups.map((g) => `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">${esc(g.m)}</span><div class="panel panel--tight">${g.items.map((v) => `<div class="list-row"><span>${esc(ritualName(v))}${ritualTags(v)}</span><span style="text-align:right">${esc(dayFmt(v.created_at))}</span></div>`).join('')}</div></section>`).join('')}`;
+    }
+    main.innerHTML = `
+      <h1>Moje rytuały</h1>
+      ${body}
+      <p class="small center">Widzisz tu rytuały zapisane na Twojej karcie w aplikacji.${allVisits ? '' : ' Teraz pokazuję tylko ostatnie wizyty.'}</p>
+      <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów kolejny rytuał</a>`;
+  }
+
+  function renderPackage() {
+    const list = packages();
+    const one = (p, i) => {
+      const n = p.used.length;
+      const grid = p.size ? `<div class="pkg-grid">${Array.from({ length: p.size }, (_, k) => `<span class="pkg-dot${k < n ? ' pkg-dot--on' : ''}">${k + 1}</span>`).join('')}</div>` : '';
+      return `<section class="panel${i === 0 && !p.done ? ' panel--gold' : ''}" style="gap:12px" aria-label="Pakiet">
+        <div class="row"><span class="eyebrow eyebrow--gold">${p.done ? 'Pakiet wykorzystany' : i === 0 ? 'Twój pakiet' : 'Wcześniejszy pakiet'}</span>${p.size ? `<span class="strong">${n} / ${p.size}</span>` : ''}</div>
+        ${p.service ? `<span class="strong" style="font-size:17px">${esc(cleanService(p.service))}</span>` : ''}
+        ${p.boughtAt ? `<span class="small">Kupiony ${esc(UI.fmtDate(p.boughtAt))}</span>` : ''}
+        ${grid}
+        <span class="strong gold">${esc(pkgHead(p))}</span>
+        ${n ? `<div class="panel panel--tight" style="background:none;border:none;padding:0">${p.used.map((u, k) => `<div class="list-row"><span>${k + 1}. ${esc(u.service && !/\d+\s*wizyt/i.test(u.service) ? cleanService(u.service) : 'Rytuał z pakietu')}</span><span style="text-align:right">${esc(dayFmt(u.at))}</span></div>`).join('')}</div>` : '<span class="small">Nie było jeszcze wizyty z tego pakietu.</span>'}
+        ${p.size ? '' : '<span class="small">Liczbę rytuałów w pakiecie dopiszę przy najbliższej wizycie.</span>'}
+      </section>`;
+    };
+    main.innerHTML = `
+      <h1>Mój pakiet</h1>
+      ${list.length ? list.map(one).join('') : '<section class="panel"><span class="strong">Nie masz teraz pakietu</span></section>'}
+      <p class="small center">Wizyty z pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
+      <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów kolejny rytuał</a>`;
   }
 
   // Zgoda na SMS i oferty: pytam raz na karcie (dla kart założonych przed formularzem ze zgodą), zmiana na dole karty.
@@ -877,7 +986,9 @@
       await Promise.all([loadRequests(), loadGaps()]);
       if (JSON.stringify(requests) + JSON.stringify(gaps) !== reqBefore && screen === 'card' && fresh.stamps === card.stamps) { card = fresh; return render(); }
       const before = card.stamps, bdayBefore = card.birthday_used_year, visitsBefore = (card.visits || []).length;
+      const topBefore = ((card.visits || [])[0] || {}).created_at;
       card = fresh;
+      if (((fresh.visits || [])[0] || {}).created_at !== topBefore) { await loadVisits(); if (fresh.stamps === before) render(); }
       if (fresh.stamps > before) {
         const n = fresh.stamps;
         const d = Rules.discountFor(n);
@@ -896,7 +1007,14 @@
     } catch (e) { /* cicho, spróbujemy później */ }
   }
   function setPolling(ms) { clearInterval(poll); poll = setInterval(refresh, ms); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    refresh();
+    // powrót z Ustawień telefonu: zgoda mogła się zmienić, więc odnawiam subskrypcję i odświeżam ramkę
+    if (!card || !pushSupported()) return;
+    const was = pushOn;
+    (Notification.permission === 'granted' ? subscribePush(true) : Promise.resolve()).then(checkPush).then(() => { if (pushOn !== was && screen === 'card') render(); });
+  });
   window.addEventListener('storage', (e) => { if (Api.demo && e.key === 'tctd.demoDb') refresh(); });
 
   start();
