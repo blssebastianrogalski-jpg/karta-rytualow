@@ -86,6 +86,9 @@ h2 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 21px; li
 .btn--gold:hover { background: var(--gold-hi); color: var(--on-gold); }
 .btn--line { background: transparent; border-color: var(--gold); color: var(--gold); }
 .btn--ghost { background: transparent; border-color: var(--line); color: var(--muted); }
+.btn--black { background: #000; border-color: var(--line); color: var(--text); }
+.btn--black:hover { border-color: var(--gold-dim); color: var(--text); }
+.btn--gold.btn--two small { color: var(--on-gold); opacity: .8; }
 .btn--paper { background: var(--paper); color: var(--bg); }
 .btn--danger { background: transparent; border-color: #6B3A30; color: var(--danger); }
 .btn--sm { min-height: 44px; font-size: 12.5px; padding: 0 14px; width: auto; }

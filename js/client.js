@@ -443,8 +443,8 @@
       ${pkgTile}
       ${next}
       ${reqBox}
-      <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
-      <button class="btn btn--line btn--two" id="reqBtn"><span>Zapytaj o termin</span><small>Nie masz Booksy albo wolisz z niego nie korzystać? Kliknij tutaj, a ja odezwę się z terminem.</small></button>
+      <button class="btn btn--gold btn--two" id="reqBtn"><span>Umów wizytę w aplikacji</span><small>Wybierz dzień i rytuał, a ja potwierdzę termin.</small></button>
+      <a class="btn btn--black" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
       ${wallet}
       ${tiles}
       ${install}
@@ -618,8 +618,8 @@
     const svcNow = moving && moving.service ? services.find((x) => x === moving.service || cleanService(x) === cleanService(moving.service)) : null;
     main.innerHTML = `
       <button class="back" id="reqBack">‹ Karta</button>
-      <h1>${moving ? 'Przełóż wizytę' : 'Zapytaj o termin'}</h1>
-      <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
+      <h1>${moving ? 'Przełóż wizytę' : 'Umów wizytę'}</h1>
+      <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Napisz, kiedy chcesz przyjść. Potwierdzę termin SMS-em, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
         <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}">
@@ -794,6 +794,9 @@
     return `<section class="panel" style="gap:8px">${head('Wyłączone')}<span class="small">Po stuknięciu telefon zapyta o zgodę: wybierz <b>Zezwól</b>.</span><button class="btn btn--gold btn--sm" id="pushBtn2">Włącz powiadomienia</button></section>`;
   }
 
+  // przycisk „Umów kolejny rytuał” na zakładkach Rytuały i Pakiet: umawianie w aplikacji
+  function bookBtn() { const b = main.querySelector('[data-book]'); if (b) b.addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); }); }
+
   // ---------- moje rytuały i pakiet ----------
   async function loadVisits() {
     try { allVisits = await Api.myVisits(CardStore.get()); }
@@ -841,7 +844,8 @@
       <h1>Moje rytuały</h1>
       ${body}
       <p class="small center">Widzisz tu rytuały zapisane na Twojej karcie w aplikacji.${allVisits ? '' : ' Teraz pokazuję tylko ostatnie wizyty.'}</p>
-      <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów kolejny rytuał</a>`;
+      <button class="btn btn--gold" data-book>Umów kolejny rytuał</button>`;
+    bookBtn();
   }
 
   function renderPackage() {
@@ -863,7 +867,8 @@
       <h1>Mój pakiet</h1>
       ${list.length ? list.map(one).join('') : '<section class="panel"><span class="strong">Nie masz teraz pakietu</span></section>'}
       <p class="small center">Wizyty z pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
-      <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów kolejny rytuał</a>`;
+      <button class="btn btn--gold" data-book>Umów kolejny rytuał</button>`;
+    bookBtn();
   }
 
   // Zgoda na SMS i oferty: pytam raz na karcie (dla kart założonych przed formularzem ze zgodą), zmiana na dole karty.
