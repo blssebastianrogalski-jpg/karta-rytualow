@@ -1171,6 +1171,7 @@
         <button class="btn btn--ghost" data-mode="package_visit">Wizyta z pakietu · bez pieczątki</button>
         ${c.stamps > 0 ? '<button class="linkbtn" id="undoBtn" style="align-self:center">Cofnij ostatnią pieczątkę</button>' : ''}
       </section>
+      <section class="panel" id="pkgBox" style="gap:10px" hidden></section>
       <div class="btn-row">
         ${currentPlan ? '' : '<button class="btn btn--ghost" data-plan-btn="0">+ Plan dziś</button>'}
         <button class="btn btn--ghost" data-plan-btn="1">+ Plan jutro</button>
@@ -1222,6 +1223,7 @@
       openPlanAdd(c, o === 2 ? Rules.dayPL(2) : Rules.dayPL(o), svc(), true);
     }));
     on('#editBtn', () => openEdit());
+    fillPkg(c);
     on('#delBtn', async () => {
       if (!(await UI.ask('Usunąć kartę: ' + c.name + '? Tego nie da się cofnąć.', 'Usuń'))) return;
       try { await Api.deleteCard(c.id); toast('Usunięto kartę.'); closeSheet(); } catch (e) { fail(e); }
@@ -1240,6 +1242,31 @@
       try { await Api.setSmsConsent(c.id, smsOk.checked); toast(smsOk.checked ? 'Zapisano zgodę na SMS.' : 'Bez SMS dla tej karty.'); }
       catch (e) { smsOk.checked = !smsOk.checked; fail(e); }
     });
+  }
+
+  // Pakiet klientki: ile rytuałów wykorzystała i kiedy (to samo widzi w aplikacji w zakładce „Pakiet”).
+  async function fillPkg(c, vs) {
+    if (!vs) { try { vs = await Api.cardVisits(c.id); } catch (e) { vs = c.visits || []; } }
+    const box = sheetIn.querySelector('#pkgBox');
+    if (!box || !current || current.id !== c.id) return;
+    const p = Rules.packages(vs)[0];
+    if (!p || (p.done && Date.now() - new Date(p.used[p.used.length - 1].at) > 30 * 864e5)) { box.hidden = true; return; }
+    const n = p.used.length;
+    const canSize = p.boughtAt && !p.fromShop;
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="row"><span class="eyebrow eyebrow--gold">${p.done ? 'Pakiet wykorzystany' : 'Pakiet'}</span><span class="strong gold">${p.size ? n + ' / ' + p.size : n + ' ' + UI.plural(n, 'rytuał', 'rytuały', 'rytuałów')}</span></div>
+      ${p.service ? `<span class="small">${esc(p.service)}${p.boughtAt ? ' · kupiony ' + esc(UI.fmtShort(p.boughtAt)) : ''}</span>` : ''}
+      ${n ? `<span class="small">Wizyty: ${p.used.map((u) => esc(UI.fmtShort(u.at))).join(', ')}</span>` : ''}
+      ${canSize && !p.size ? `<span class="small gold">Ile rytuałów ma ten pakiet? Klientka zobaczy w aplikacji, ile jej zostało.</span>
+        <div class="btn-row">${[3, 5, 10].map((k) => `<button class="btn btn--line btn--sm" data-pkg-size="${k}">${k}</button>`).join('')}<button class="btn btn--ghost btn--sm" data-pkg-size="0">Inna</button></div>` : ''}
+      ${canSize && p.size ? '<button class="linkbtn" data-pkg-size="0" style="align-self:flex-start">Zmień liczbę rytuałów w pakiecie</button>' : ''}`;
+    box.querySelectorAll('[data-pkg-size]').forEach((b) => b.addEventListener('click', async () => {
+      let k = +b.dataset.pkgSize;
+      if (!k) { k = parseInt(prompt('Ile rytuałów ma pakiet?', p.size || ''), 10); if (!k) return; }
+      try { fillPkg(c, await Api.setPackageSize(c.id, k)); toast('Zapisano: pakiet ' + k + ' ' + UI.plural(k, 'rytuał', 'rytuały', 'rytuałów') + '.'); }
+      catch (e) { fail(/could not find the function|schema cache/i.test(e.message || '') ? new Error('Najpierw uruchom w Supabase plik pakiety-i-historia.sql.') : e); }
+    }));
   }
 
   function on(sel, fn) { const el = sheetIn.querySelector(sel); if (el) el.addEventListener('click', fn); }
