@@ -30,6 +30,7 @@
     birthday: 'Rytuał urodzinowy −20%',
     referral: 'Pieczątka za polecenie',
     gap: 'Dodatkowa pieczątka za wolny termin',
+    review: 'Pieczątka za opinię',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
@@ -457,6 +458,7 @@
         <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' · są wolne' : ''}</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
         <div id="gapAuto"></div>
+        <div id="reviewStampBox"></div>
         <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
       </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
@@ -473,6 +475,7 @@
     box.querySelectorAll('[data-gap-day]').forEach((b) => b.addEventListener('click', () => openGapSend(forecast.find((f) => f.day === b.dataset.gapDay))));
     box.querySelectorAll('[data-gap-sms]').forEach((b) => b.addEventListener('click', () => openGapPhone(b.dataset.gapSms)));
     loadGapAuto();
+    loadReviewStamp();
     if (location.hash === '#wolne') { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
   }
 
@@ -536,6 +539,25 @@
     </div>`;
     box.querySelectorAll('[data-auto]').forEach((b) => b.addEventListener('click', async () => {
       try { await Api.gapSmsAutoSet(b.dataset.auto === '1'); loadGapAuto(); } catch (e) { toast(e.message); }
+    }));
+  }
+
+  // Pieczątka za opinię w Google (test z włącznikiem)
+  async function loadReviewStamp() {
+    const box = $('#reviewStampBox');
+    if (!box) return;
+    let on;
+    try { on = await Api.reviewStampGet(); } catch (e) { box.innerHTML = ''; return; } // baza jeszcze bez opinie-google.sql
+    box.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)">
+      <span class="eyebrow">Pieczątka za opinię w Google</span>
+      <div class="tabs tabs--small" role="radiogroup" aria-label="Pieczątka za opinię w Google">
+        <button role="radio" data-rs="1" aria-selected="${on}">Włączona</button>
+        <button role="radio" data-rs="0" aria-selected="${!on}">Wyłączona</button>
+      </div>
+      <span class="small">${on ? 'Klientka dostaje +1 pieczątkę raz, gdy oznaczy na karcie „Już wystawiłam opinię” (albo Ty w panelu).' : 'Prośby o opinię wychodzą dalej, ale bez pieczątki.'}</span>
+    </div>`;
+    box.querySelectorAll('[data-rs]').forEach((b) => b.addEventListener('click', async () => {
+      try { await Api.reviewStampSet(b.dataset.rs === '1'); loadReviewStamp(); } catch (e) { toast(e.message); }
     }));
   }
 
@@ -1193,6 +1215,7 @@
         <div class="row"><span class="small">Telefon</span><span>${c.phone ? `<a href="tel:${esc(c.phone.replace(/\s/g, ''))}">${esc(c.phone)}</a>` : '—'}</span></div>
         <div class="row"><span class="small">Urodziny</span><span>${esc(UI.fmtBday(c.bday_day, c.bday_month) || '—')}${c.birthday_used_year === y ? ' <span class="tag">wykorzystane ' + y + '</span>' : ''}</span></div>
         <label class="check" id="smsOkRow" hidden><input type="checkbox" id="smsOk"> <span>Zgoda na SMS (życzenia urodzinowe przychodzą też SMS-em)</span></label>
+        <label class="check" id="reviewRow" hidden><input type="checkbox" id="reviewDone"> <span>Wystawiła opinię w Google (nie dostaje już próśb o opinię)</span></label>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
         ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : ''}
         ${c.ref_count ? `<div class="row"><span class="small">Poleciła</span><span>${c.ref_count} ${UI.plural(c.ref_count, 'osobę', 'osoby', 'osób')}${c.ref_rewarded < c.ref_count ? ' · ' + (c.ref_count - c.ref_rewarded) + ' przed wizytą' : ''}</span></div>` : ''}
@@ -1241,6 +1264,12 @@
     smsOk.addEventListener('change', async () => {
       try { await Api.setSmsConsent(c.id, smsOk.checked); toast(smsOk.checked ? 'Zapisano zgodę na SMS.' : 'Bez SMS dla tej karty.'); }
       catch (e) { smsOk.checked = !smsOk.checked; fail(e); }
+    });
+    const revDone = $('#reviewDone');
+    Api.reviewDone(c.id).then((ok) => { revDone.checked = !!ok; $('#reviewRow').hidden = false; }).catch(() => {});
+    revDone.addEventListener('change', async () => {
+      try { await Api.setReviewDone(c.id, revDone.checked); toast(revDone.checked ? 'Zapisano: opinia wystawiona.' : 'Prośby o opinię znów włączone.'); if (revDone.checked) { const fresh = await Api.getCard(c.id).catch(() => null); if (fresh && fresh.stamps !== c.stamps) { current = fresh; Api.notifyStamp(c.id, fresh.stamps).catch(() => {}); toast('Dopisano pieczątkę za opinię: ' + c.name + ' (' + fresh.stamps + '/10).'); renderCard(); } } }
+      catch (e) { revDone.checked = !revDone.checked; fail(e); }
     });
   }
 

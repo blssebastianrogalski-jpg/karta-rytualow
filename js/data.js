@@ -351,6 +351,8 @@
       }),
       myConsent: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return !!(c && c.sms_ok); }),
       setMyConsent: (token, ok) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { c.sms_ok = !!ok; save(db); } return !!ok; }),
+      myReview: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return { done: !!(c && c.review_done), clicked: !!(c && c.review_clicked) }; }),
+      markMyReview: (token, what) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { if (what === 'done') c.review_done = true; else c.review_clicked = true; save(db); } return { done: !!(c && c.review_done), clicked: !!(c && c.review_clicked) }; }),
       notifyStamp: async () => null,
       googleWalletLink: async () => { throw new Error('W trybie demo Portfel Google nie działa.'); },
       saveStaffPush: async () => null,
@@ -628,6 +630,8 @@
       gapSmsMark: (offerId, cardId) => run(() => { guard(); const db = load(); db.gapSmsDone = db.gapSmsDone || {}; (db.gapSmsDone[offerId] = db.gapSmsDone[offerId] || []).push(cardId); save(db); }),
       gapSmsAutoGet: () => run(() => { guard(); return load().gapSmsAuto !== false; }),
       gapSmsAutoSet: (on) => run(() => { guard(); const db = load(); db.gapSmsAuto = !!on; save(db); return !!on; }),
+      reviewStampGet: () => run(() => { guard(); return load().reviewStamp !== false; }),
+      reviewStampSet: (on) => run(() => { guard(); const db = load(); db.reviewStamp = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
       // historia odwołań i ostrzeżenia (jak historia-odwolan.sql)
@@ -805,6 +809,8 @@
       }); }),
       smsConsent: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.sms_ok); }),
       setSmsConsent: (id, ok) => run(() => { guard(); mutate(id, (c) => { c.sms_ok = !!ok; }); return !!ok; }),
+      reviewDone: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.review_done); }),
+      setReviewDone: (id, ok) => run(() => { guard(); mutate(id, (c) => { c.review_done = !!ok; }); return !!ok; }),
       // sprzedaż vouchera (pokaz: bez sklepu i bez drukarki)
       vouchersList: () => run(() => { guard(); return DEMO_VOUCHERS.map((v) => ({ ...v, stamps: stampsFor(v.name) })); }),
       sellVoucher: (p) => run(() => {
@@ -985,6 +991,8 @@
       setPackageSize: (id, n) => rpc('set_package_size', { p_id: id, p_size: n }),
       myConsent: (token) => rpc('my_consent', { p_token: token }),
       setMyConsent: (token, ok) => rpc('set_my_consent', { p_token: token, p_ok: !!ok }),
+      myReview: (token) => rpc('my_review', { p_token: token }),
+      markMyReview: (token, what) => rpc('mark_my_review', { p_token: token, p_what: what }),
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       googleWalletLink: async (token) => (await invoke('portfel-google', { action: 'link', token })).url,
@@ -1057,6 +1065,8 @@
       gapSmsMark: (offerId, cardId) => rpc('gap_sms_mark', { p_offer: offerId, p_card: cardId }),
       gapSmsAutoGet: () => rpc('gap_sms_auto_get', {}),
       gapSmsAutoSet: (on) => rpc('gap_sms_auto_set', { p_on: !!on }),
+      reviewStampGet: () => rpc('review_stamp_get', {}),
+      reviewStampSet: (on) => rpc('review_stamp_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
       // historia odwołań (historia-odwolan.sql); bez tego SQL panel działa jak dawniej
       riskAlerts: async () => { try { return await rpc('risk_alerts_list', {}); } catch (e) { if (noFn(e)) return []; throw e; } },
@@ -1080,6 +1090,8 @@
       transferStamps: (id, n) => rpc('transfer_paper_stamps', { p_id: id, p_stamps: n }),
       smsConsent: (id) => rpc('sms_consent_get', { p_id: id }),
       setSmsConsent: (id, ok) => rpc('sms_consent_set', { p_id: id, p_ok: !!ok }),
+      reviewDone: (id) => rpc('review_get', { p_id: id }),
+      setReviewDone: (id, ok) => rpc('review_set', { p_id: id, p_done: !!ok }),
       // sprzedaż vouchera: przez funkcję sprzedaz-vouchera (sekret sklepu zostaje na serwerze)
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),

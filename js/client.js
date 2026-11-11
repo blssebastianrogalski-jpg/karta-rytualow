@@ -31,6 +31,7 @@
   const CONSENT_ASK = 'Zgoda na powiadomienia i SMS nie jest zaznaczona. Bez niej nie mogę przypomnieć Ci o wizycie, ofertach specjalnych ani o prezencie urodzinowym −20%. Zaznaczyć zgodę?';
   const CONSENT_KEY = 'tctd.consentAsked';
   let myConsent = null;    // zgoda na SMS i oferty (null = jeszcze nie wiem)
+  let myReview = null;     // opinia w Google: { done, clicked } (null = jeszcze nie wiem)
   const pushSupported = () => !!CFG.PUSH_PUBLIC_KEY && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
   const VISIT_LABEL = {
@@ -39,7 +40,8 @@
     package_visit: 'Wizyta z pakietu',
     birthday: 'Rytuał urodzinowy −20%',
     referral: 'Pieczątka za polecenie',
-    gap: 'Dodatkowa pieczątka za wolny termin'
+    gap: 'Dodatkowa pieczątka za wolny termin',
+    review: 'Pieczątka za opinię'
   };
 
   // kod polecającej z linku …/?p=KOD (czeka, aż koleżanka założy kartę)
@@ -385,6 +387,7 @@
   // ---------- karta ----------
   function renderCard(animate) {
     loadConsent();
+    loadReview();
     const p = UI.progressText(card.stamps);
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -411,9 +414,15 @@
         ${viaBooksy ? `<a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">${viaBooksy < upcoming.length ? 'Zmień lub odwołaj wizytę z Booksy' : 'Zmień lub odwołaj w Booksy'}</a>` : ''}
       </section>` : '';
     const reqBox = requestsBox();
-    const lastVisit = visits[0];
+    const lastVisit = visits.find((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind));
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
-    const review = CFG.GOOGLE_REVIEW_URL && recentVisit ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.</span><a class="btn btn--gold" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a></section>` : '';
+    // Opinia w Google: okienko widać zawsze (wcześniej tylko 7 dni po wizycie).
+    // Po oznaczeniu „Już wystawiłam opinię” zostaje podziękowanie z linkiem do opinii.
+    const rv = myReview || {};
+    const reviewHead = recentVisit ? 'Jak było' + (lastVisit.service ? ' na rytuale ' + esc(cleanService(lastVisit.service)) : ' na wizycie') + '?' : 'Podzielisz się wrażeniami?';
+    const review = !CFG.GOOGLE_REVIEW_URL ? '' : rv.done
+      ? `<section class="panel" style="gap:8px" aria-label="Opinia w Google"><span class="eyebrow eyebrow--gold">Twoja opinia w Google</span><span class="strong">Dziękuję za Twoją opinię!</span><span class="small" style="color:var(--text-2)">Każde dobre słowo bardzo mnie cieszy. Po kolejnym rytuale zawsze możesz do niej wrócić i coś dopisać.</span><a class="btn btn--line btn--sm" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Otwórz opinię w Google</a></section>`
+      : `<section class="panel panel--gold" style="gap:10px" aria-label="Opinia w Google"><span class="eyebrow eyebrow--gold">Twoja opinia w Google</span><span class="strong" style="font-size:17px">${reviewHead}</span><span class="small" style="color:var(--text-2)">Kilka ciepłych słów od Ciebie pomaga innym odważyć się na pierwszy rytuał, a mnie daje ogromną radość. To zajmie tylko chwilę.</span>${rv.stamp ? '<span class="small gold"><strong>Mała niespodzianka:</strong> w podziękowaniu dopiszę Ci dodatkową pieczątkę na karcie.</span>' : ''}<a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${rv.clicked ? `<button class="btn btn--line btn--sm" id="reviewDoneBtn">Już wystawiłam opinię${rv.stamp ? ' (+1 pieczątka)' : ''}</button>` : ''}</section>`;
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
@@ -445,10 +454,10 @@
       ${reqBox}
       <button class="btn btn--gold btn--two" id="reqBtn"><span>Umów wizytę w aplikacji</span><small>Wybierz dzień i rytuał, a ja potwierdzę termin.</small></button>
       <a class="btn btn--black" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
+      ${review}
       ${wallet}
       ${tiles}
       ${install}
-      ${review}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie rytuały</span><div class="panel panel--tight">${visits.map(ritualRow).join('')}</div><button class="btn btn--ghost btn--sm" data-go="rytualy">Wszystkie moje rytuały →</button></section>` : ''}
       ${refer}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
@@ -458,6 +467,10 @@
       <p class="small center">Numer karty: <span class="strong">${esc(card.code)}</span>. Zmieniasz telefon? Poproś w studiu o link do swojej karty, a wszystkie pieczątki przejdą na nowy telefon.</p>
       <button class="linkbtn" id="forgetBtn" style="align-self:center;color:var(--muted)">Wyloguj z karty na tym urządzeniu</button>`;
     $('#forgetBtn').addEventListener('click', forgetCard);
+    const rg = $('#reviewGo');
+    if (rg) rg.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'clicked').then((r) => { myReview = r; setTimeout(render, 800); }).catch(() => {}); });
+    const rd = $('#reviewDoneBtn');
+    if (rd) rd.addEventListener('click', () => { Api.markMyReview(CardStore.get(), 'done').then(async (r) => { const st = myReview && myReview.stamp; myReview = r; try { card = (await Api.getMyCard(CardStore.get())) || card; } catch (e2) { /* zostaje stara karta */ } UI.toast(st ? 'Dziękuję za opinię! Pieczątka dopisana.' : 'Dziękuję za opinię!'); render(); }).catch(() => UI.toast('Nie udało się zapisać. Spróbuj za chwilę.')); });
     const qc = $('#qConsent');
     if (qc) qc.addEventListener('change', () => answerConsent(qc.checked));
     const ib = $('#installBtn');
@@ -876,6 +889,10 @@
   function loadConsent() {
     if (myConsent !== null || !CardStore.get()) return;
     Api.myConsent(CardStore.get()).then((ok) => { myConsent = !!ok; if (screen === 'card' || screen === 'promo') render(); }).catch(() => {});
+  }
+  function loadReview() {
+    if (myReview !== null || !CardStore.get()) return;
+    Api.myReview(CardStore.get()).then((r) => { myReview = r || { done: false, clicked: false, stamp: false }; if (screen === 'card') render(); }).catch(() => {});
   }
   async function answerConsent(ok) {
     try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
