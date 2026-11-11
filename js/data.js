@@ -71,9 +71,9 @@
     });
     return out.reverse();
   };
-  // Rytuały odbyte w studiu (bez dodatkowych pieczątek za polecenie i wolny termin), od najnowszego.
+  // Rytuały odbyte w studiu (bez dodatkowych pieczątek za polecenie, wolny termin i opinię), od najnowszego.
   Rules.rituals = function (visits) {
-    return (visits || []).filter((v) => v.kind !== 'referral' && v.kind !== 'gap' && !(v.kind === 'package_buy' && /\d+\s*wizyt/i.test(v.service || '')));
+    return (visits || []).filter((v) => !['referral', 'gap', 'review'].includes(v.kind) && !(v.kind === 'package_buy' && /\d+\s*wizyt/i.test(v.service || '')));
   };
 
   // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
