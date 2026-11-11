@@ -440,7 +440,7 @@
       ${next}
       ${reqBox}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
-      <button class="btn btn--line btn--two" id="reqBtn"><span>Poproś o termin bez Booksy</span><small>Nie masz Booksy albo wolisz z niego nie korzystać? Kliknij tutaj, a ja odezwę się z terminem.</small></button>
+      <button class="btn btn--line btn--two" id="reqBtn"><span>Zapytaj o termin</span><small>Nie masz Booksy albo wolisz z niego nie korzystać? Kliknij tutaj, a ja odezwę się z terminem.</small></button>
       ${wallet}
       ${tiles}
       ${install}
@@ -574,7 +574,7 @@
         <span class="eyebrow eyebrow--gold">${r.move_of ? 'Odpowiedź na prośbę o przełożenie' : 'Odpowiedź na prośbę o termin'}</span>
         <span class="small" style="color:var(--text-2)">${esc(when(r))}</span>
         <span class="strong">${esc(r.reply || 'Ten termin jest niestety zajęty.')}</span>
-        <button class="btn btn--line btn--sm" data-req-again="1" style="margin-top:4px">Poproś o inny termin</button>
+        <button class="btn btn--line btn--sm" data-req-again="1" style="margin-top:4px">Zapytaj o inny termin</button>
       </div>`).join('')}
     </section>`;
   }
@@ -616,7 +616,7 @@
     const svcNow = moving && moving.service ? services.find((x) => x === moving.service || cleanService(x) === cleanService(moving.service)) : null;
     main.innerHTML = `
       <button class="back" id="reqBack">‹ Karta</button>
-      <h1>${moving ? 'Przełóż wizytę' : 'Poproś o termin'}</h1>
+      <h1>${moving ? 'Przełóż wizytę' : 'Zapytaj o termin'}</h1>
       <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Nie korzystasz z Booksy? Napisz, kiedy chcesz przyjść. Oddzwonię albo napiszę SMS i potwierdzę termin, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
@@ -629,7 +629,7 @@
         <div class="field"><label for="rPhone">Telefon do kontaktu</label><input class="input" id="rPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000" value="${esc(card.phone || '')}"></div>
         <div class="field"><label for="rMsg">Wiadomość (opcjonalnie)</label><textarea class="input" id="rMsg" rows="3" maxlength="500" placeholder="np. mogę też w sobotę rano"></textarea></div>
         <p class="error" id="rErr" role="alert" hidden></p>
-        <button class="btn btn--gold" type="submit" id="rBtn">${moving ? 'Poproś o nowy termin' : 'Wyślij prośbę'}</button>
+        <button class="btn btn--gold" type="submit" id="rBtn">${moving ? 'Zapytaj o nowy termin' : 'Wyślij prośbę'}</button>
       </form>
       <p class="small center">To jeszcze nie rezerwacja. Termin jest Twój, gdy go potwierdzę. Szybciej: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     let part = 'any';
@@ -684,7 +684,7 @@
         go('card');
       } catch (ex) {
         err.textContent = ex.message; err.hidden = false;
-        btn.disabled = false; btn.textContent = moving ? 'Poproś o nowy termin' : 'Wyślij prośbę';
+        btn.disabled = false; btn.textContent = moving ? 'Zapytaj o nowy termin' : 'Wyślij prośbę';
       }
     });
   }

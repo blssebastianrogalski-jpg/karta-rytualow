@@ -63,7 +63,8 @@
     ['Refleksologia Stóp Premium', 150], ['Masaż relaksacyjny 60 min', 150], ['Masaż relaksacyjny 90 min', 190],
     ['Masaż aromaterapeutyczny 60 min', 180], ['Masaż aromaterapeutyczny 90 min', 230], ['Masaż gorącą świecą', 190],
     ['Masaż głowy, karku i obręczy barkowej', 130], ['Ukojenie dla Żuchwy i Twarzy', 190]
-  ].map(([name, price], i) => ({ id: 201 + i, name, price }));
+  ].map(([name, price], i) => ({ id: 201 + i, name, price }))
+    .concat([{ id: 299, name: 'Zadatek na poczet rezerwacji terminu', price: 0, deposit: true, max: 2000 }]);
 
   // ---------- TRYB DEMO ----------
   // Sprawdzanie wolnych godzin w trybie pokazowym (w bazie robi to prosby-konflikty.sql)
@@ -171,8 +172,22 @@
         { id: 2, kind: 'cancel', day: tm, start_at: at('14:00'), end_at: at('15:30'), status: 'open', info: 'odwołała: Ewa Zielińska, Kobido UP®', push_n: 9, sms_n: 14, sent_at: daysAgo(0.02), created_at: daysAgo(0.03) }
       ];
       db.promotions = [
-        { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo poproś o termin w aplikacji.',
+        { id: 1, title: 'Head SPA Premium −20% w listopadzie', body: 'Rytuał oczyszczania i masażu skóry głowy w niższej cenie. Zarezerwuj termin w Booksy albo zapytaj o termin w aplikacji.',
           valid_until: Rules.dayPL(30), pushed: 12, created_at: daysAgo(1) }
+      ];
+      // historia odwołań (jak historia-odwolan.sql): Halina 2× nieodbyta wizyta w tym roku, Piotr z Booksy 2 odwołania pod rząd
+      const hal = db.cards[3];
+      db.incidents = [
+        { id: 1, card_id: hal.id, kind: 'late', at: daysAgo(64), source: 'booksy', service: 'Kobido UP®', note: null },
+        { id: 2, card_id: hal.id, kind: 'noshow', at: daysAgo(19), source: 'panel', service: 'Masaż gorącą świecą', note: null },
+        { id: 3, card_id: hal.id, kind: 'cancel', at: daysAgo(150), source: 'manual', service: null, note: 'SMS 2 dni wcześniej' }
+      ];
+      const inThree = new Date(Rules.dayPL(3) + 'T15:30:00').toISOString();
+      db.risks = [
+        { id: 1, card_id: hal.id, name: hal.name, phone: hal.phone, day: Rules.dayPL(3), visit_at: inThree, service: 'Kobido UP®', source: 'booksy', status: 'new',
+          reasons: [{ rule: 'year', n: 2, list: [{ at: daysAgo(64), kind: 'late' }, { at: daysAgo(19), kind: 'noshow' }] }], created_at: daysAgo(0.01) },
+        { id: 2, card_id: null, name: 'Piotr Zając', phone: '603 777 888', day: Rules.dayPL(5), visit_at: new Date(Rules.dayPL(5) + 'T10:00:00').toISOString(), service: 'Head SPA Premium', source: 'booksy', status: 'new',
+          reasons: [{ rule: 'row', list: [{ at: daysAgo(40), kind: 'cancel' }, { at: daysAgo(12), kind: 'late' }] }], created_at: daysAgo(0.2) }
       ];
       return db;
     }
@@ -426,6 +441,42 @@
       }),
       planSet: (planId, status) => run(() => { guard(); const db = load(); const p = (db.plan || []).find((x) => x.id === planId); if (p) p.status = status; save(db); }),
       planRemove: (planId) => run(() => { guard(); const db = load(); db.plan = (db.plan || []).filter((x) => x.id !== planId); save(db); }),
+      // zmiana wizyty w panelu (jak zmiana-wizyty.sql)
+      planMove: (p, day, time, service, sms) => run(() => {
+        guard();
+        const db = load();
+        const x = (db.plan || []).find((y) => y.id === p.id);
+        if (!x) throw new Error('Tej wizyty już nie ma w planie. Odśwież panel.');
+        if (x.booking_id) throw new Error('Wizytę z Booksy przesuń w Booksy, plan zaktualizuje się sam.');
+        if (x.status !== 'planned') throw new Error('Ta wizyta jest już zapisana.');
+        if (!day) throw new Error('Wybierz dzień.');
+        if (day < Rules.dayPL(0)) throw new Error('Ten dzień już minął.');
+        if (day > Rules.dayPL(30)) throw new Error('Plan można ułożyć najwyżej 30 dni naprzód.');
+        if (day !== x.day && db.plan.some((y) => y.card_id === x.card_id && y.day === day && y.status === 'planned' && y.id !== x.id)) throw new Error('Ta klientka ma już wizytę w tym dniu.');
+        x.day = day; x.start_at = time ? new Date(day + 'T' + time).toISOString() : null; if (service) x.service = service;
+        save(db);
+        const c = db.cards.find((y) => y.id === x.card_id);
+        return { day, start_at: x.start_at, sms: !!(sms && c && c.phone) };
+      }),
+      planCancel: (planId, reason, sms) => run(() => {
+        guard();
+        const db = load();
+        const x = (db.plan || []).find((y) => y.id === planId);
+        if (!x) return { sms: false };
+        if (x.status !== 'planned') throw new Error('Ta wizyta jest już zapisana, więc nie można jej usunąć z planu.');
+        (db.requests || []).forEach((r) => { if (r.plan_id === x.id && r.status === 'confirmed') Object.assign(r, { status: 'cancelled', reply: 'Odwołana przez studio', handled_at: new Date().toISOString() }); });
+        db.plan = db.plan.filter((y) => y !== x);
+        // historia odwołań (jak wyzwalacz day_plan_incident)
+        if (reason !== 'mistake' && x.card_id) {
+          const at = x.start_at || new Date(x.day + 'T09:00:00').toISOString();
+          const kind = reason === 'noshow' ? 'noshow' : new Date(at) - Date.now() < 864e5 ? 'late' : 'cancel';
+          db.incidents = db.incidents || [];
+          db.incidents.push({ id: Date.now(), card_id: x.card_id, kind, at, source: 'panel', service: x.service || null, note: null });
+        }
+        save(db);
+        const c = db.cards.find((y) => y.id === x.card_id);
+        return { sms: !!(sms && reason !== 'noshow' && c && c.phone) };
+      }),
       // prośby o termin (jak prosby-o-termin.sql i prosby-konflikty.sql)
       requestCreate: (token, f) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
@@ -457,7 +508,7 @@
       requestPick: (token, id, start) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
         const r = c && (db.requests || []).find((x) => x.id === id && x.card_id === c.id && x.status === 'suggested');
-        if (!r) throw new Error('Ta propozycja jest już nieaktualna. Poproś o termin jeszcze raz.');
+        if (!r) throw new Error('Ta propozycja jest już nieaktualna. Zapytaj o termin jeszcze raz.');
         const d = new Date(start);
         const res = Slots.check(db, d, Slots.minutes(r.service));
         Object.assign(r, { pref_day: Slots.ymd(d), pref_time: Slots.hm(d), pref_part: 'any', status: 'new', attempt: 2, suggestions: null,
@@ -536,6 +587,43 @@
       reviewStampSet: (on) => run(() => { guard(); const db = load(); db.reviewStamp = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
+      // historia odwołań i ostrzeżenia (jak historia-odwolan.sql)
+      riskAlerts: () => run(() => {
+        guard(); const db = load(); const from = Date.now() - 14 * 864e5;
+        return (db.risks || []).filter((a) => a.status === 'new' || new Date(a.handled_at) > from)
+          .sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created_at.localeCompare(a.created_at))
+          .map((a) => { const c = db.cards.find((x) => x.id === a.card_id); return Object.assign({}, a, { name: c ? c.name : a.name }); });
+      }),
+      riskAlertSms: (id, text) => run(() => {
+        guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (!a) throw new Error('Nie ma już tego ostrzeżenia. Odśwież panel.');
+        if (a.status === 'sent') throw new Error('SMS do tej osoby już wyszedł.');
+        const msg = String(text || '').trim();
+        if (msg.length < 10) throw new Error('Wpisz treść SMS-a.');
+        if (msg.length > 459) throw new Error('SMS jest za długi (najwyżej 459 znaków, czyli 3 części).');
+        Object.assign(a, { status: 'sent', sms_text: msg, handled_at: new Date().toISOString() }); save(db);
+        return { phone: a.phone, demo: true };
+      }),
+      riskAlertDismiss: (id) => run(() => { guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id); if (a && a.status === 'new') Object.assign(a, { status: 'dismissed', handled_at: new Date().toISOString() }); save(db); }),
+      incidentsCard: (cardId) => run(() => {
+        guard(); const db = load(); const y = Rules.todayPL().y;
+        const list = (db.incidents || []).filter((i) => i.card_id === cardId).sort((a, b) => b.at.localeCompare(a.at));
+        const bad = list.filter((i) => i.kind !== 'cancel' && new Date(i.at).getFullYear() === y);
+        const c = db.cards.find((x) => x.id === cardId) || { visits: [] };
+        const ev = list.map((i) => ({ at: i.at, x: true })).concat((c.visits || []).map((v) => ({ at: v.created_at, x: false })))
+          .filter((e) => e.x || new Date(e.at) < new Date()).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2);
+        const risk = [];
+        if (bad.length >= 2) risk.push({ rule: 'year', n: bad.length, list: bad.slice().reverse() });
+        if (ev.length === 2 && ev[0].x && ev[1].x) risk.push({ rule: 'row', list: list.slice(0, 2).reverse() });
+        return { list, risk: risk.length ? risk : null };
+      }),
+      incidentAdd: (cardId, day, kind, note) => run(() => {
+        guard(); if (!day) throw new Error('Sprawdź datę wizyty.');
+        const db = load(); db.incidents = db.incidents || [];
+        db.incidents.push({ id: Date.now(), card_id: cardId, kind, at: new Date(day + 'T12:00:00').toISOString(), source: 'manual', service: null, note: (note || '').trim() || null });
+        save(db);
+      }),
+      incidentDelete: (id) => run(() => { guard(); const db = load(); db.incidents = (db.incidents || []).filter((i) => i.id !== id); save(db); }),
       gapList: () => run(() => {
         guard(); const db = load();
         return (db.gaps || []).slice().sort((a, b) => (b.status === 'ask') - (a.status === 'ask') || b.day.localeCompare(a.day) || a.start_at.localeCompare(b.start_at))
@@ -723,13 +811,15 @@
         guard();
         const r = DEMO_RITUALS.find((x) => x.id === p.product_id);
         if (!r) throw new Error('Wybierz rytuał z listy.');
-        if (!(p.amount >= 1 && p.amount <= r.price)) throw new Error('Kwota musi być od 1 zł do ceny rytuału (' + r.price + ' zł).');
+        if (r.deposit ? !(p.amount >= 1 && p.amount <= r.max) : !(p.amount >= 1 && p.amount <= r.price)) {
+          throw new Error(r.deposit ? 'Zadatek musi być od 1 zł do ' + r.max + ' zł.' : 'Kwota musi być od 1 zł do ceny rytuału (' + r.price + ' zł).');
+        }
         const db = load();
         db.ritualReceipts = db.ritualReceipts || [];
         const prev = db.ritualReceipts.find((x) => x.ref === p.client_ref);
         if (prev) return Object.assign({ duplicate: true }, prev);
         const id = 2000 + db.ritualReceipts.length + 1;
-        const row = { ref: p.client_ref, order_id: id, order_number: String(id), created_at: new Date().toISOString(), service: r.name, total: p.amount,
+        const row = { ref: p.client_ref, order_id: id, order_number: String(id), created_at: new Date().toISOString(), service: r.name, total: p.amount, deposit: !!r.deposit,
           payment: p.payment, name: p.name, email: p.email, receipt: 'queued' };
         db.ritualReceipts.unshift(row);
         save(db);
@@ -801,6 +891,9 @@
       }
       return data;
     };
+    // funkcji jeszcze nie ma w bazie (nowy plik SQL nieuruchomiony)
+    const noFn = (e) => /could not find the function|schema cache/i.test(e.message || '');
+    const NEW_SQL = 'Ta zmiana zadziała po uruchomieniu w Supabase pliku zmiana-wizyty.sql.';
     const invoke = async (fn, body) => {
       const { data, error } = await sb.functions.invoke(fn, { body });
       if (error) {
@@ -887,6 +980,23 @@
       planSetTime: (planId, time) => rpc('plan_set_time', { p_plan_id: planId, p_time: time || null }),
       planSet: (planId, status) => rpc('plan_set', { p_plan_id: planId, p_status: status }),
       planRemove: (planId) => rpc('plan_remove', { p_plan_id: planId }),
+      // zmiana wizyty (zmiana-wizyty.sql); bez tego SQL działa tylko to, co było wcześniej
+      planMove: async (p, day, time, service, sms) => {
+        try { return await rpc('plan_move', { p_plan_id: p.id, p_day: day, p_time: time || null, p_service: service || null, p_sms: !!sms }); } catch (e) {
+          if (!noFn(e)) throw e;
+          if (day !== p.day || sms || (service && service !== p.service)) throw new Error(NEW_SQL);
+          await rpc('plan_set_time', { p_plan_id: p.id, p_time: time || null });
+          return { day, sms: false };
+        }
+      },
+      planCancel: async (planId, reason, sms) => {
+        try { return await rpc('plan_cancel', { p_plan_id: planId, p_reason: reason, p_sms: !!sms }); } catch (e) {
+          if (!noFn(e)) throw e;
+          if (sms || reason === 'mistake') throw new Error(NEW_SQL);
+          await rpc('plan_remove', { p_plan_id: planId });
+          return { sms: false };
+        }
+      },
       requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {}, f.moveOf ? { p_move_of: f.moveOf } : {})),
       visitCancel: (token, planId) => rpc('visit_cancel', { p_token: token, p_plan_id: planId }),
       requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
@@ -908,6 +1018,13 @@
       reviewStampGet: () => rpc('review_stamp_get', {}),
       reviewStampSet: (on) => rpc('review_stamp_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
+      // historia odwołań (historia-odwolan.sql); bez tego SQL panel działa jak dawniej
+      riskAlerts: async () => { try { return await rpc('risk_alerts_list', {}); } catch (e) { if (noFn(e)) return []; throw e; } },
+      riskAlertSms: (id, text) => rpc('risk_alert_sms', { p_id: id, p_text: text }),
+      riskAlertDismiss: (id) => rpc('risk_alert_dismiss', { p_id: id }),
+      incidentsCard: async (cardId) => { try { return await rpc('incidents_card', { p_card: cardId }); } catch (e) { if (noFn(e)) return null; throw e; } },
+      incidentAdd: (cardId, day, kind, note) => rpc('incident_add', { p_card: cardId, p_day: day, p_kind: kind, p_note: note || null }),
+      incidentDelete: (id) => rpc('incident_delete', { p_id: id }),
       gapDecide: (day, send) => rpc('gap_decide', { p_day: day, p_send: !!send }),
       gapForecast: (days) => rpc('gap_forecast', { p_days: days || 5 }),
       gapSendNow: (day, windows, channel) => rpc('gap_send_now', { p_day: day, p_windows: windows || null, p_channel: channel }),
