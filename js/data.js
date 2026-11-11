@@ -39,6 +39,43 @@
     }
   };
 
+  // Pakiety z historii wizyt (od najnowszego). Zakup w sklepie ma liczbę w nazwie („5 wizyt”) i nie jest rytuałem.
+  // Zakup zapisany w panelu przy wizycie („Zakup pakietu”) to już pierwszy rytuał z pakietu.
+  // Kolejne „Wizyty z pakietu” trafiają do ostatnio kupionego pakietu.
+  Rules.packages = function (visits) {
+    const list = (visits || []).filter((v) => v.kind === 'package_buy' || v.kind === 'package_visit')
+      .slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const out = [];
+    let cur = null;
+    for (const v of list) {
+      const t = new Date(v.created_at).getTime();
+      if (v.kind === 'package_buy') {
+        // TRANSFORMACJA ze sklepu = dwa wiersze naraz (2 pieczątki), to wciąż jeden pakiet
+        if (cur && cur.boughtAt && cur.service === (v.service || '') && t - new Date(cur.boughtAt).getTime() < 10 * 60e3) {
+          if (v.package_size) cur.size = v.package_size;
+          continue;
+        }
+        const m = String(v.service || '').match(/(\d+)\s*wizyt/i);
+        const fromShop = !!m;
+        cur = { service: v.service || '', boughtAt: v.created_at, size: v.package_size || (m ? +m[1] : null), fromShop, used: [] };
+        if (!fromShop) cur.used.push({ at: v.created_at, service: v.service || '' });
+        out.push(cur);
+      } else {
+        if (!cur) { cur = { service: '', boughtAt: null, size: null, fromShop: false, used: [] }; out.push(cur); }
+        cur.used.push({ at: v.created_at, service: v.service || '' });
+      }
+    }
+    out.forEach((p) => {
+      p.left = p.size ? Math.max(0, p.size - p.used.length) : null;
+      p.done = !!p.size && p.used.length >= p.size;
+    });
+    return out.reverse();
+  };
+  // Rytuały odbyte w studiu (bez dodatkowych pieczątek za polecenie, wolny termin i opinię), od najnowszego.
+  Rules.rituals = function (visits) {
+    return (visits || []).filter((v) => !['referral', 'gap', 'review'].includes(v.kind) && !(v.kind === 'package_buy' && /\d+\s*wizyt/i.test(v.service || '')));
+  };
+
   // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
   // Ta sama reguła jest w funkcji sprzedaz-vouchera (tam decyduje ostatecznie).
   function stampsFor(name) {
@@ -302,6 +339,16 @@
         return view(c);
       }),
       savePushSubscription: async () => null,
+      myVisits: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return c ? JSON.parse(JSON.stringify(c.visits || [])) : []; }),
+      cardVisits: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return c ? JSON.parse(JSON.stringify(c.visits || [])) : []; }),
+      setPackageSize: (id, n) => run(() => { guard();
+        if (!(n >= 1 && n <= 50)) throw new Error('Podaj liczbę rytuałów od 1 do 50.');
+        const db = load(); const c = db.cards.find((x) => x.id === id);
+        const v = c && (c.visits || []).find((x) => x.kind === 'package_buy');
+        if (!v) throw new Error('Ta klientka nie ma zapisanego zakupu pakietu.');
+        c.visits.forEach((x) => { if (x.kind === 'package_buy' && x.service === v.service && Math.abs(new Date(v.created_at) - new Date(x.created_at)) < 6e5) x.package_size = n; });
+        save(db); return JSON.parse(JSON.stringify(c.visits));
+      }),
       myConsent: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return !!(c && c.sms_ok); }),
       setMyConsent: (token, ok) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { c.sms_ok = !!ok; save(db); } return !!ok; }),
       myReview: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return { done: !!(c && c.review_done), clicked: !!(c && c.review_clicked) }; }),
@@ -939,6 +986,9 @@
         if (!r.ok) throw new Error(r.error || 'Nieprawidłowy kod.');
         return r.cards;
       },
+      myVisits: (token) => rpc('my_visits', { p_token: token }),
+      cardVisits: (id) => rpc('card_visits', { p_id: id }),
+      setPackageSize: (id, n) => rpc('set_package_size', { p_id: id, p_size: n }),
       myConsent: (token) => rpc('my_consent', { p_token: token }),
       setMyConsent: (token, ok) => rpc('set_my_consent', { p_token: token, p_ok: !!ok }),
       myReview: (token) => rpc('my_review', { p_token: token }),
