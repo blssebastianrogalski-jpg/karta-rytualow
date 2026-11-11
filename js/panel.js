@@ -1257,7 +1257,8 @@
     box.innerHTML = `
       <div class="row"><span class="eyebrow eyebrow--gold">${p.done ? 'Pakiet wykorzystany' : 'Pakiet'}</span><span class="strong gold">${p.size ? n + ' / ' + p.size : n + ' ' + UI.plural(n, 'rytuał', 'rytuały', 'rytuałów')}</span></div>
       ${p.service ? `<span class="small">${esc(p.service)}${p.boughtAt ? ' · kupiony ' + esc(UI.fmtShort(p.boughtAt)) : ''}</span>` : ''}
-      ${n ? `<span class="small">Wizyty: ${p.used.map((u) => esc(UI.fmtShort(u.at))).join(', ')}</span>` : ''}
+      ${p.size ? `<span class="strong gold">${p.done ? 'Wykorzystane wszystkie ' + p.size : 'Wykorzystane ' + n + ' z ' + p.size + ' · ' + UI.plural(p.left, 'został', 'zostały', 'zostało') + ' ' + p.left}</span>` : ''}
+      ${n ? `<div>${p.used.map((u, k) => `<div class="list-row"><span class="small">${k + 1}. ${esc(u.service && !/\d+\s*wizyt/i.test(u.service) ? u.service : 'Rytuał z pakietu')}</span><span class="small">${esc(UI.fmtDate(u.at))}</span></div>`).join('')}</div>` : '<span class="small">Nie było jeszcze wizyty z tego pakietu.</span>'}
       ${canSize && !p.size ? `<span class="small gold">Ile rytuałów ma ten pakiet? Klientka zobaczy w aplikacji, ile jej zostało.</span>
         <div class="btn-row">${[3, 5, 10].map((k) => `<button class="btn btn--line btn--sm" data-pkg-size="${k}">${k}</button>`).join('')}<button class="btn btn--ghost btn--sm" data-pkg-size="0">Inna</button></div>` : ''}
       ${canSize && p.size ? '<button class="linkbtn" data-pkg-size="0" style="align-self:flex-start">Zmień liczbę rytuałów w pakiecie</button>' : ''}`;
