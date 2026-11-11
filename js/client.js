@@ -410,7 +410,13 @@
     const reqBox = requestsBox();
     const lastVisit = visits.find((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind));
     const recentVisit = lastVisit && Date.now() - new Date(lastVisit.created_at) < 7 * 864e5;
-    const review = CFG.GOOGLE_REVIEW_URL && recentVisit && !(myReview && myReview.done) ? `<section class="panel panel--gold" style="gap:10px"><span class="strong">Jak było${lastVisit.service ? ' na rytuale ' + esc(lastVisit.service) : ' na wizycie'}?</span><span class="small">Podziel się opinią. To dla mnie bardzo ważne.${myReview && myReview.stamp ? ' Za opinię dopiszę Ci pieczątkę na karcie.' : ''}</span><a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${myReview && myReview.clicked ? `<button class="btn btn--line btn--sm" id="reviewDoneBtn">Już wystawiłam opinię${myReview.stamp ? ' (+1 pieczątka)' : ''}</button>` : ''}</section>` : '';
+    // Opinia w Google: okienko widać zawsze (wcześniej tylko 7 dni po wizycie).
+    // Po oznaczeniu „Już wystawiłam opinię” zostaje podziękowanie z linkiem do opinii.
+    const rv = myReview || {};
+    const reviewHead = recentVisit ? 'Jak było' + (lastVisit.service ? ' na rytuale ' + esc(cleanService(lastVisit.service)) : ' na wizycie') + '?' : 'Podzielisz się wrażeniami?';
+    const review = !CFG.GOOGLE_REVIEW_URL ? '' : rv.done
+      ? `<section class="panel" style="gap:8px" aria-label="Opinia w Google"><span class="eyebrow eyebrow--gold">Twoja opinia w Google</span><span class="strong">Dziękuję za Twoją opinię!</span><span class="small" style="color:var(--text-2)">Każde dobre słowo bardzo mnie cieszy. Po kolejnym rytuale zawsze możesz do niej wrócić i coś dopisać.</span><a class="btn btn--line btn--sm" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Otwórz opinię w Google</a></section>`
+      : `<section class="panel panel--gold" style="gap:10px" aria-label="Opinia w Google"><span class="eyebrow eyebrow--gold">Twoja opinia w Google</span><span class="strong" style="font-size:17px">${reviewHead}</span><span class="small" style="color:var(--text-2)">Kilka ciepłych słów od Ciebie pomaga innym odważyć się na pierwszy rytuał, a mnie daje ogromną radość. To zajmie tylko chwilę.</span>${rv.stamp ? '<span class="small gold"><strong>Mała niespodzianka:</strong> w podziękowaniu dopiszę Ci dodatkową pieczątkę na karcie.</span>' : ''}<a class="btn btn--gold" id="reviewGo" href="${esc(CFG.GOOGLE_REVIEW_URL)}" target="_blank" rel="noopener">Zostaw opinię w Google</a>${rv.clicked ? `<button class="btn btn--line btn--sm" id="reviewDoneBtn">Już wystawiłam opinię${rv.stamp ? ' (+1 pieczątka)' : ''}</button>` : ''}</section>`;
     const tiles = linkTiles();
     const welcome = card.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${card.referred_by_name ? ' · ' + esc(card.referred_by_name.split(/\s+/)[0]) : ''}</span><span class="strong" style="font-size:17px">Twój pierwszy rytuał: −10%</span><span class="small" style="color:var(--text-2)">Rabat naliczę przy płatności.</span></section>` : '';
     const refCount = card.ref_count || 0, refDone = card.ref_rewarded || 0;
@@ -441,10 +447,10 @@
       ${reqBox}
       <a class="btn btn--gold" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
       <button class="btn btn--line btn--two" id="reqBtn"><span>Zapytaj o termin</span><small>Nie masz Booksy albo wolisz z niego nie korzystać? Kliknij tutaj, a ja odezwę się z terminem.</small></button>
+      ${review}
       ${wallet}
       ${tiles}
       ${install}
-      ${review}
       ${visits.length ? `<section style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Ostatnie wizyty</span><div class="panel panel--tight">${visits.map((v) => `<div class="list-row"><span>${esc(v.service || VISIT_LABEL[v.kind])}${v.kind === 'package_visit' ? ' <span class="tag">z pakietu</span>' : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('')}</div></section>` : ''}
       ${refer}
       <p class="small center">Wizyty z zakupionego pakietu nie dają pieczątek, bo pakiet ma już cenę promocyjną. Pieczątkę dostajesz za zakup pakietu.</p>
