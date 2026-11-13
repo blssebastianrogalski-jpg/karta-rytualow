@@ -1685,7 +1685,8 @@
           <div class="panel" style="gap:12px">
             <div class="field"><label for="rcName">Imię i nazwisko</label><input class="input" id="rcName" autocomplete="off" placeholder="np. Anna Kowalska"></div>
             <div id="rcHints"></div>
-            <div class="field"><label for="rcEmail">E-mail (na niego przyjdzie e-paragon)</label><input class="input" id="rcEmail" type="email" inputmode="email" autocomplete="off"></div>
+            <div class="field"><label for="rcEmail">E-mail (nieobowiązkowy, na niego przyjdzie e-paragon)</label><input class="input" id="rcEmail" type="email" inputmode="email" autocomplete="off"></div>
+            <p class="small" style="margin:0">Bez e-maila paragon i tak wydrukuje się na kasie, tylko e-paragon nie pójdzie do klientki.</p>
             <div class="field"><label for="rcPhone">Telefon (nieobowiązkowy)</label><input class="input" id="rcPhone" type="tel" autocomplete="off"></div>
           </div>
         </section>
@@ -1824,17 +1825,17 @@
       : r.deposit && r.max && amount > r.max ? 'Zadatek może mieć najwyżej ' + zl(r.max) + '.'
       : !r.deposit && amount > r.price ? 'Kwota nie może być wyższa niż cena rytuału (' + zl(r.price) + ').'
       : !rc.payment ? 'Wybierz sposób płatności.' : rc.payment === 'blik_telefon' && !rc.transferOk ? 'Zaznacz, że przelew BLIK dotarł na konto.'
-      : name.length < 2 ? 'Wpisz imię i nazwisko.' : !EMAIL_RE.test(email) ? 'Wpisz poprawny e-mail, na który przyjdzie e-paragon.' : '';
+      : name.length < 2 ? 'Wpisz imię i nazwisko.' : email && !EMAIL_RE.test(email) ? 'Sprawdź e-mail albo zostaw to pole puste.' : '';
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     const payLabel = RC_PAY.find((x) => x[0] === rc.payment)[1].toLowerCase();
-    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.deposit ? 'Zadatek na poczet rezerwacji terminu' : r.name + (rc.minus ? ' (po odliczeniu zadatku ' + zl(rc.minus) + ')' : '')}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
+    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.deposit ? 'Zadatek na poczet rezerwacji terminu' : r.name + (rc.minus ? ' (po odliczeniu zadatku ' + zl(rc.minus) + ')' : '')}, płatność: ${payLabel}. ${email ? 'E-paragon pójdzie na ' + email + '.' : 'Bez e-maila: wydrukuje się tylko paragon na kasie.'}`, 'Wystaw paragon'))) return;
     const btn = $('#rcIssue');
     btn.disabled = true;
     btn.textContent = 'Wysyłam do sklepu…';
     try {
       const res = await Api.issueReceipt({
         client_ref: rc.ref || (rc.ref = crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-        product_id: r.id, amount, payment: rc.payment, name, email, phone: phone || undefined
+        product_id: r.id, amount, payment: rc.payment, name, email: email || undefined, phone: phone || undefined
       });
       showRcResult(res);
       if (rcPre && rcPre.alertId && rc.minus && !r.deposit) {
@@ -1860,7 +1861,7 @@
     box.innerHTML = `<section class="panel panel--gold" style="gap:10px">
       <span class="eyebrow eyebrow--gold">${r.duplicate ? 'Ten paragon był już wysłany' : 'Paragon wystawiony'} · ${esc(r.service)}</span>
       <span class="strong" style="font-size:17px">Zamówienie nr ${esc(r.order_number)} · ${zl(r.total)}</span>
-      <span class="small">E-paragon pójdzie na ${esc(r.email || 'e-mail klientki')}, gdy drukarka potwierdzi paragon.</span>
+      <span class="small">${r.email ? 'E-paragon pójdzie na ' + esc(r.email) + ', gdy drukarka potwierdzi paragon.' : 'Bez e-maila klientki: paragon wydrukuje się na kasie.'}</span>
       <div class="hint" id="rcStatus" role="status">Paragon w kolejce…</div>
       <button class="btn btn--ghost btn--sm" id="rcCheck" hidden>Sprawdź ponownie</button>
     </section>`;
