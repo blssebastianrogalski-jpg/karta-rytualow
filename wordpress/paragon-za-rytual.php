@@ -6,6 +6,8 @@
  * płatność i dane klientki. Fragment tworzy opłacone zamówienie WooCommerce z ukrytym
  * produktem „rytuał”, a wtyczka eparagony.pl drukuje paragon na Elzab i wysyła
  * e-paragon na e-mail klientki (tak samo jak przy voucherach).
+ * E-mail jest nieobowiązkowy: bez niego paragon i tak się drukuje, a e-paragon (kopia)
+ * idzie na adres sklepu (WooCommerce → Ustawienia → E-maile → adres nadawcy).
  *
  * Dostęp: tylko zalogowana osoba z panelu. Fragment sprawdza jej token w Supabase
  * (funkcja is_staff), więc nie ma tu żadnego tajnego klucza.
@@ -13,7 +15,7 @@
  * Adresy (prefiks /wp-json/tctd/v1/paragon):
  *   GET  /rytualy        lista rytuałów z cenami (produkty z kategorii „Rytuały – paragon”)
  *                        i na końcu pozycja „Zadatek na poczet rezerwacji terminu” (deposit: true, kwota dowolna)
- *   POST /               { client_ref, product_id, amount, payment, name, email, phone? }
+ *   POST /               { client_ref, product_id, amount, payment, name, email?, phone? }
  *   GET  /{order_id}     status paragonu
  *   GET  /historia       ostatnie paragony za rytuały
  *
@@ -207,7 +209,7 @@ function tctd_paragon_row( WC_Order $order ) {
 		'payment'      => (string) $order->get_meta( '_tctd_paragon_payment' ),
 		'deposit'      => (bool) $order->get_meta( '_tctd_paragon_zadatek' ),
 		'name'         => trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ),
-		'email'        => $order->get_billing_email(),
+		'email'        => $order->get_meta( '_tctd_paragon_bez_maila' ) ? '' : $order->get_billing_email(),
 	), tctd_paragon_receipt( $order ) );
 }
 
@@ -264,8 +266,17 @@ function tctd_paragon_issue( WP_REST_Request $req ) {
 	if ( mb_strlen( $name ) < 2 ) {
 		return new WP_Error( 'tctd_400', 'Wpisz imię i nazwisko.', array( 'status' => 400 ) );
 	}
-	if ( ! is_email( $email ) ) {
+	if ( $email !== '' && ! is_email( $email ) ) {
 		return new WP_Error( 'tctd_400', 'Sprawdź adres e-mail.', array( 'status' => 400 ) );
+	}
+	// Klientka bez e-maila: zamówienie dostaje adres sklepu, żeby wtyczka eparagony.pl
+	// miała komplet danych i wydrukowała paragon. Kopia e-paragonu trafia wtedy do studia.
+	$no_mail = $email === '';
+	if ( $no_mail ) {
+		$email = sanitize_email( (string) get_option( 'woocommerce_email_from_address' ) );
+		if ( ! is_email( $email ) ) {
+			$email = sanitize_email( (string) get_option( 'admin_email' ) );
+		}
 	}
 
 	// To samo kliknięcie wysłane drugi raz: oddaję istniejący paragon, nie drukuję drugiego.
@@ -292,11 +303,15 @@ function tctd_paragon_issue( WP_REST_Request $req ) {
 	$order->update_meta_data( TCTD_PARAGON_META, '1' );
 	$order->update_meta_data( '_tctd_paragon_ref', $ref );
 	$order->update_meta_data( '_tctd_paragon_payment', $payment );
+	if ( $no_mail ) {
+		$order->update_meta_data( '_tctd_paragon_bez_maila', '1' );
+	}
 	if ( $deposit ) {
 		$order->update_meta_data( '_tctd_paragon_zadatek', '1' );
 	}
 	$order->calculate_totals( false );
-	$order->add_order_note( $deposit ? 'Paragon za zadatek na poczet rezerwacji terminu wystawiony z panelu studia.' : 'Paragon za rytuał wystawiony z panelu studia.' );
+	$order->add_order_note( ( $deposit ? 'Paragon za zadatek na poczet rezerwacji terminu wystawiony z panelu studia.' : 'Paragon za rytuał wystawiony z panelu studia.' )
+		. ( $no_mail ? ' Klientka bez e-maila: e-paragon (kopia) na adres sklepu.' : '' ) );
 	$order->save();
 
 	// Opłacone na miejscu: wtyczka eparagony.pl wysyła paragon do drukarki i e-paragon na e-mail.
