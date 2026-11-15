@@ -39,6 +39,43 @@
     }
   };
 
+  // Pakiety z historii wizyt (od najnowszego). Zakup w sklepie ma liczbę w nazwie („5 wizyt”) i nie jest rytuałem.
+  // Zakup zapisany w panelu przy wizycie („Zakup pakietu”) to już pierwszy rytuał z pakietu.
+  // Kolejne „Wizyty z pakietu” trafiają do ostatnio kupionego pakietu.
+  Rules.packages = function (visits) {
+    const list = (visits || []).filter((v) => v.kind === 'package_buy' || v.kind === 'package_visit')
+      .slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const out = [];
+    let cur = null;
+    for (const v of list) {
+      const t = new Date(v.created_at).getTime();
+      if (v.kind === 'package_buy') {
+        // TRANSFORMACJA ze sklepu = dwa wiersze naraz (2 pieczątki), to wciąż jeden pakiet
+        if (cur && cur.boughtAt && cur.service === (v.service || '') && t - new Date(cur.boughtAt).getTime() < 10 * 60e3) {
+          if (v.package_size) cur.size = v.package_size;
+          continue;
+        }
+        const m = String(v.service || '').match(/(\d+)\s*wizyt/i);
+        const fromShop = !!m;
+        cur = { service: v.service || '', boughtAt: v.created_at, size: v.package_size || (m ? +m[1] : null), fromShop, used: [] };
+        if (!fromShop) cur.used.push({ at: v.created_at, service: v.service || '' });
+        out.push(cur);
+      } else {
+        if (!cur) { cur = { service: '', boughtAt: null, size: null, fromShop: false, used: [] }; out.push(cur); }
+        cur.used.push({ at: v.created_at, service: v.service || '' });
+      }
+    }
+    out.forEach((p) => {
+      p.left = p.size ? Math.max(0, p.size - p.used.length) : null;
+      p.done = !!p.size && p.used.length >= p.size;
+    });
+    return out.reverse();
+  };
+  // Rytuały odbyte w studiu (bez dodatkowych pieczątek za polecenie, wolny termin i opinię), od najnowszego.
+  Rules.rituals = function (visits) {
+    return (visits || []).filter((v) => !['referral', 'gap', 'review'].includes(v.kind) && !(v.kind === 'package_buy' && /\d+\s*wizyt/i.test(v.service || '')));
+  };
+
   // Regulamin §6b: pakiet Kobido START lub RYTUAŁ = 1 pieczątka, TRANSFORMACJA = 2.
   // Ta sama reguła jest w funkcji sprzedaz-vouchera (tam decyduje ostatecznie).
   function stampsFor(name) {
@@ -187,7 +224,10 @@
         { id: 1, card_id: hal.id, name: hal.name, phone: hal.phone, day: Rules.dayPL(3), visit_at: inThree, service: 'Kobido UP®', source: 'booksy', status: 'new',
           reasons: [{ rule: 'year', n: 2, list: [{ at: daysAgo(64), kind: 'late' }, { at: daysAgo(19), kind: 'noshow' }] }], created_at: daysAgo(0.01) },
         { id: 2, card_id: null, name: 'Piotr Zając', phone: '603 777 888', day: Rules.dayPL(5), visit_at: new Date(Rules.dayPL(5) + 'T10:00:00').toISOString(), service: 'Head SPA Premium', source: 'booksy', status: 'new',
-          reasons: [{ rule: 'row', list: [{ at: daysAgo(40), kind: 'cancel' }, { at: daysAgo(12), kind: 'late' }] }], created_at: daysAgo(0.2) }
+          reasons: [{ rule: 'row', list: [{ at: daysAgo(40), kind: 'cancel' }, { at: daysAgo(12), kind: 'late' }] }], created_at: daysAgo(0.2) },
+        { id: 3, card_id: db.cards[1].id, name: db.cards[1].name, phone: db.cards[1].phone, day: Rules.dayPL(0), visit_at: null, service: 'Head SPA Premium', source: 'plan', status: 'paid',
+          reasons: [{ rule: 'row', list: [{ at: daysAgo(30), kind: 'late' }, { at: daysAgo(9), kind: 'late' }] }], created_at: daysAgo(4),
+          sms_at: daysAgo(4), handled_at: daysAgo(3), deposit_amount: 175, deposit_paid_at: daysAgo(3) }
       ];
       return db;
     }
@@ -302,8 +342,20 @@
         return view(c);
       }),
       savePushSubscription: async () => null,
+      myVisits: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return c ? JSON.parse(JSON.stringify(c.visits || [])) : []; }),
+      cardVisits: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return c ? JSON.parse(JSON.stringify(c.visits || [])) : []; }),
+      setPackageSize: (id, n) => run(() => { guard();
+        if (!(n >= 1 && n <= 50)) throw new Error('Podaj liczbę rytuałów od 1 do 50.');
+        const db = load(); const c = db.cards.find((x) => x.id === id);
+        const v = c && (c.visits || []).find((x) => x.kind === 'package_buy');
+        if (!v) throw new Error('Ta klientka nie ma zapisanego zakupu pakietu.');
+        c.visits.forEach((x) => { if (x.kind === 'package_buy' && x.service === v.service && Math.abs(new Date(v.created_at) - new Date(x.created_at)) < 6e5) x.package_size = n; });
+        save(db); return JSON.parse(JSON.stringify(c.visits));
+      }),
       myConsent: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return !!(c && c.sms_ok); }),
       setMyConsent: (token, ok) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { c.sms_ok = !!ok; save(db); } return !!ok; }),
+      myReview: (token) => run(() => { const c = load().cards.find((x) => x.token === token); return { done: !!(c && c.review_done), clicked: !!(c && c.review_clicked) }; }),
+      markMyReview: (token, what) => run(() => { const db = load(); const c = db.cards.find((x) => x.token === token); if (c) { if (what === 'done') c.review_done = true; else c.review_clicked = true; save(db); } return { done: !!(c && c.review_done), clicked: !!(c && c.review_clicked) }; }),
       notifyStamp: async () => null,
       googleWalletLink: async () => { throw new Error('W trybie demo Portfel Google nie działa.'); },
       saveStaffPush: async () => null,
@@ -581,27 +633,69 @@
       gapSmsMark: (offerId, cardId) => run(() => { guard(); const db = load(); db.gapSmsDone = db.gapSmsDone || {}; (db.gapSmsDone[offerId] = db.gapSmsDone[offerId] || []).push(cardId); save(db); }),
       gapSmsAutoGet: () => run(() => { guard(); return load().gapSmsAuto !== false; }),
       gapSmsAutoSet: (on) => run(() => { guard(); const db = load(); db.gapSmsAuto = !!on; save(db); return !!on; }),
+      reviewStampGet: () => run(() => { guard(); return load().reviewStamp !== false; }),
+      reviewStampSet: (on) => run(() => { guard(); const db = load(); db.reviewStamp = !!on; save(db); return !!on; }),
       smsAlert: () => run(() => { guard(); const db = load(); return db.smsAlertHidden ? null : { n: 16, last_at: new Date(Date.now() - 6 * 3600e3).toISOString(), error: 'Brak środków na koncie' }; }),
       smsAlertDismiss: () => run(() => { guard(); const db = load(); db.smsAlertHidden = true; save(db); }),
       // historia odwołań i ostrzeżenia (jak historia-odwolan.sql)
       riskAlerts: () => run(() => {
-        guard(); const db = load(); const from = Date.now() - 14 * 864e5;
-        return (db.risks || []).filter((a) => a.status === 'new' || new Date(a.handled_at) > from)
+        guard(); const db = load(); const from = Date.now() - 14 * 864e5; const yday = Rules.dayPL(-1);
+        return (db.risks || []).filter((a) => a.status === 'new' || (a.status === 'sent' && a.day >= yday) || (a.status === 'paid' && !a.deposit_settled_at)
+            || new Date(a.deposit_settled_at || a.handled_at) > from)
           .sort((a, b) => (b.status === 'new') - (a.status === 'new') || b.created_at.localeCompare(a.created_at))
           .map((a) => { const c = db.cards.find((x) => x.id === a.card_id); return Object.assign({}, a, { name: c ? c.name : a.name }); });
       }),
       riskAlertSms: (id, text) => run(() => {
         guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
         if (!a) throw new Error('Nie ma już tego ostrzeżenia. Odśwież panel.');
-        if (a.status === 'sent') throw new Error('SMS do tej osoby już wyszedł.');
+        if (a.sms_at) throw new Error('SMS do tej osoby już wyszedł.');
         const msg = String(text || '').trim();
         if (msg.length < 10) throw new Error('Wpisz treść SMS-a.');
         const max = CFG.SMS_VIA === 'telefon' ? 1530 : 459;
         if (msg.length > max) throw new Error('SMS jest za długi (najwyżej ' + max + ' znaków).');
-        Object.assign(a, { status: 'sent', sms_text: msg, handled_at: new Date().toISOString() }); save(db);
+        const now = new Date().toISOString();
+        Object.assign(a, { status: a.status === 'paid' ? 'paid' : 'sent', sms_text: msg, sms_at: now, handled_at: a.handled_at || now }); save(db);
         return { phone: a.phone, demo: true };
       }),
-      riskAlertDismiss: (id) => run(() => { guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id); if (a && a.status === 'new') Object.assign(a, { status: 'dismissed', handled_at: new Date().toISOString() }); save(db); }),
+      riskAlertSmsMark: (id) => run(() => {
+        guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (!a) throw new Error('Nie ma już tego ostrzeżenia. Odśwież panel.');
+        const now = new Date().toISOString();
+        if (a.status !== 'paid') Object.assign(a, { status: 'sent', handled_at: now });
+        a.sms_at = a.sms_at || now; save(db);
+      }),
+      riskAlertDeposit: (id, amount) => run(() => {
+        guard(); if (!(amount >= 1 && amount <= 2000)) throw new Error('Wpisz kwotę zadatku (od 1 do 2000 zł).');
+        const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (!a) throw new Error('Nie ma już tego ostrzeżenia. Odśwież panel.');
+        const now = new Date().toISOString();
+        Object.assign(a, { status: 'paid', deposit_amount: Math.round(amount * 100) / 100, deposit_paid_at: now, deposit_settled_at: null, handled_at: now }); save(db);
+      }),
+      riskAlertDepositUndo: (id) => run(() => {
+        guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (a && a.status === 'paid') Object.assign(a, { status: a.sms_at ? 'sent' : 'new', deposit_amount: null, deposit_paid_at: null, deposit_settled_at: null, handled_at: a.sms_at || null });
+        save(db);
+      }),
+      riskAlertDepositSettle: (id) => run(() => {
+        guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id);
+        if (a && a.status === 'paid' && !a.deposit_settled_at) a.deposit_settled_at = new Date().toISOString();
+        save(db);
+      }),
+      // jak deposits_plan w zadatek-wplacony.sql
+      depositsPlan: (from, to) => run(() => {
+        guard(); const db = load(); const out = [];
+        (db.risks || []).filter((a) => a.status === 'paid' && !a.deposit_settled_at).forEach((a) => {
+          const since = [a.day, new Date(a.created_at).toLocaleDateString('en-CA', { timeZone: 'Europe/Warsaw' })].sort()[0];
+          const ph = (v) => String(v || '').replace(/\D/g, '').slice(-9);
+          const mine = (db.plan || []).filter((p) => p.day >= since && (p.card_id === a.card_id && a.card_id
+            || (!a.card_id && ph(a.phone) && ph((db.cards.find((x) => x.id === p.card_id) || {}).phone) === ph(a.phone))));
+          mine.sort((x, y) => (y.day === a.day) - (x.day === a.day) || (x.day + (x.start_at || '~')).localeCompare(y.day + (y.start_at || '~')));
+          const p = mine[0];
+          if (p && p.day >= from && p.day <= to) out.push({ plan_id: p.id, alert_id: a.id, amount: a.deposit_amount, paid_at: a.deposit_paid_at, service: a.service, day: p.day });
+        });
+        return out;
+      }),
+      riskAlertDismiss: (id) => run(() => { guard(); const db = load(); const a = (db.risks || []).find((x) => x.id === id); if (a && (a.status === 'new' || a.status === 'sent')) Object.assign(a, { status: 'dismissed', handled_at: new Date().toISOString() }); save(db); }),
       incidentsCard: (cardId) => run(() => {
         guard(); const db = load(); const y = Rules.todayPL().y;
         const list = (db.incidents || []).filter((i) => i.card_id === cardId).sort((a, b) => b.at.localeCompare(a.at));
@@ -759,6 +853,8 @@
       }); }),
       smsConsent: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.sms_ok); }),
       setSmsConsent: (id, ok) => run(() => { guard(); mutate(id, (c) => { c.sms_ok = !!ok; }); return !!ok; }),
+      reviewDone: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.review_done); }),
+      setReviewDone: (id, ok) => run(() => { guard(); mutate(id, (c) => { c.review_done = !!ok; }); return !!ok; }),
       // sprzedaż vouchera (pokaz: bez sklepu i bez drukarki)
       vouchersList: () => run(() => { guard(); return DEMO_VOUCHERS.map((v) => ({ ...v, stamps: stampsFor(v.name) })); }),
       sellVoucher: (p) => run(() => {
@@ -934,8 +1030,13 @@
         if (!r.ok) throw new Error(r.error || 'Nieprawidłowy kod.');
         return r.cards;
       },
+      myVisits: (token) => rpc('my_visits', { p_token: token }),
+      cardVisits: (id) => rpc('card_visits', { p_id: id }),
+      setPackageSize: (id, n) => rpc('set_package_size', { p_id: id, p_size: n }),
       myConsent: (token) => rpc('my_consent', { p_token: token }),
       setMyConsent: (token, ok) => rpc('set_my_consent', { p_token: token, p_ok: !!ok }),
+      myReview: (token) => rpc('my_review', { p_token: token }),
+      markMyReview: (token, what) => rpc('mark_my_review', { p_token: token, p_what: what }),
       savePushSubscription: (token, sub) => rpc('save_push_subscription', { p_token: token, p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       saveStaffPush: (sub) => rpc('save_staff_push_subscription', { p_endpoint: sub.endpoint, p_p256dh: sub.keys.p256dh, p_auth: sub.keys.auth }),
       googleWalletLink: async (token) => (await invoke('portfel-google', { action: 'link', token })).url,
@@ -1008,11 +1109,19 @@
       gapSmsMark: (offerId, cardId) => rpc('gap_sms_mark', { p_offer: offerId, p_card: cardId }),
       gapSmsAutoGet: () => rpc('gap_sms_auto_get', {}),
       gapSmsAutoSet: (on) => rpc('gap_sms_auto_set', { p_on: !!on }),
+      reviewStampGet: () => rpc('review_stamp_get', {}),
+      reviewStampSet: (on) => rpc('review_stamp_set', { p_on: !!on }),
       smsAlertDismiss: () => rpc('sms_alert_dismiss', {}),
       // historia odwołań (historia-odwolan.sql); bez tego SQL panel działa jak dawniej
       riskAlerts: async () => { try { return await rpc('risk_alerts_list', {}); } catch (e) { if (noFn(e)) return []; throw e; } },
       riskAlertSms: (id, text) => rpc('risk_alert_sms', { p_id: id, p_text: text }),
       riskAlertDismiss: (id) => rpc('risk_alert_dismiss', { p_id: id }),
+      // zadatek przy ostrzeżeniu (zadatek-wplacony.sql)
+      riskAlertSmsMark: (id) => rpc('risk_alert_sms_mark', { p_id: id }),
+      riskAlertDeposit: (id, amount) => rpc('risk_alert_deposit', { p_id: id, p_amount: amount }),
+      riskAlertDepositUndo: (id) => rpc('risk_alert_deposit_undo', { p_id: id }),
+      riskAlertDepositSettle: (id) => rpc('risk_alert_deposit_settle', { p_id: id }),
+      depositsPlan: async (from, to) => { try { return await rpc('deposits_plan', { p_from: from, p_to: to }); } catch (e) { if (noFn(e)) return []; throw e; } },
       incidentsCard: async (cardId) => { try { return await rpc('incidents_card', { p_card: cardId }); } catch (e) { if (noFn(e)) return null; throw e; } },
       incidentAdd: (cardId, day, kind, note) => rpc('incident_add', { p_card: cardId, p_day: day, p_kind: kind, p_note: note || null }),
       incidentDelete: (id) => rpc('incident_delete', { p_id: id }),
@@ -1031,6 +1140,8 @@
       transferStamps: (id, n) => rpc('transfer_paper_stamps', { p_id: id, p_stamps: n }),
       smsConsent: (id) => rpc('sms_consent_get', { p_id: id }),
       setSmsConsent: (id, ok) => rpc('sms_consent_set', { p_id: id, p_ok: !!ok }),
+      reviewDone: (id) => rpc('review_get', { p_id: id }),
+      setReviewDone: (id, ok) => rpc('review_set', { p_id: id, p_done: !!ok }),
       // sprzedaż vouchera: przez funkcję sprzedaz-vouchera (sekret sklepu zostaje na serwerze)
       vouchersList: () => sale({ action: 'list' }).then((d) => d.vouchers),
       sellVoucher: (p) => sale({ action: 'sell', ...p }),

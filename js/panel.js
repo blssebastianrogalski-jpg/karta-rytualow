@@ -9,6 +9,7 @@
   let searchTimer;
   let current = null;      // otwarta karta
   let currentPlan = null;  // pozycja planu dnia, z której otwarto kartę
+  let currentDep = null;   // wpłacony zadatek do tej wizyty z planu (zadatek-wplacony.sql)
   let lastService = '';
   let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera, 'promo' = promocje
   let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro, 2 = kolejne dni
@@ -30,6 +31,7 @@
     birthday: 'Rytuał urodzinowy −20%',
     referral: 'Pieczątka za polecenie',
     gap: 'Dodatkowa pieczątka za wolny termin',
+    review: 'Pieczątka za opinię',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
@@ -313,37 +315,155 @@
     const box = $('#risks');
     try { risks = await Api.riskAlerts(); } catch (e) { risks = []; } // baza jeszcze bez historii odwołań
     if (!box) return;
+    const yday = Rules.dayPL(-1);
     const open = risks.filter((a) => a.status === 'new');
-    const done = risks.filter((a) => a.status !== 'new');
+    const waiting = risks.filter((a) => a.status === 'sent' && a.day >= yday);
+    const paid = risks.filter((a) => a.status === 'paid' && !a.deposit_settled_at);
+    const done = risks.filter((a) => !open.includes(a) && !waiting.includes(a) && !paid.includes(a));
     if (!risks.length) { box.innerHTML = ''; return; }
     const when = (a) => (a.visit_at ? dateLabel(a.day) + ', ' + hhmm(a.visit_at) : dateLabel(a.day) + (a.source === 'app' ? ' (prośba, godzina do ustalenia)' : ''));
+    const who = (a) => a.card_id ? `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600;min-height:0;padding:0" data-open="${esc(a.card_id)}">${esc(a.name)}</button>` : `<span class="strong">${esc(a.name)}</span>`;
+    const sep = (i) => i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : '';
+    const doneLine = (a) => a.status === 'paid' ? 'zadatek ' + zl(a.deposit_amount) + (a.deposit_settled_at ? ', rozliczony ' + UI.fmtShort(a.deposit_settled_at) : '')
+      : a.status === 'sent' ? 'SMS wysłany ' + UI.fmtShort(a.sms_at || a.handled_at) + ', zadatek nie wpłynął' : 'pominięte';
     box.innerHTML = `
       ${open.length ? `<div class="hint hint--error" id="ostrzezenia" style="display:flex;flex-direction:column;gap:12px">
         <span class="strong">${open.length === 1 ? 'Umówiła się osoba z historią odwołań' : 'Umówiły się osoby z historią odwołań: ' + open.length}</span>
-        ${open.map((a, i) => `<div style="display:flex;flex-direction:column;gap:4px${i ? ';padding-top:10px;border-top:1px solid var(--line-soft)' : ''}">
-          ${a.card_id ? `<button class="linkbtn" style="text-align:left;text-decoration:none;color:var(--text);font-weight:600" data-open="${esc(a.card_id)}">${esc(a.name)}</button>` : `<span class="strong">${esc(a.name)}</span>`}
+        ${open.map((a, i) => `<div style="display:flex;flex-direction:column;gap:4px${sep(i)}">
+          ${who(a)}
           <span class="strong gold">${esc(when(a))}${a.service ? ' · ' + esc(a.service) : ''}</span>
           <span class="small" style="color:var(--text-2)">${esc(RISK_SRC[a.source] || a.source)}${a.phone ? ' · ' + esc(a.phone) : ''}</span>
           ${(a.reasons || []).map((r) => `<span class="small" style="color:var(--text)">${esc(riskReason(r))}</span>`).join('')}
           <span class="small" style="color:var(--text-2)">Według regulaminu (pkt 5) ta wizyta wymaga zadatku 50%. Decyzja należy do Ciebie.</span>
-          <div class="btn-row" style="margin-top:4px">
-            <button class="btn btn--gold btn--sm" data-risk-sms="${a.id}">Napisz SMS o zadatku</button>
-            <button class="btn btn--ghost btn--sm" data-risk-no="${a.id}">Pomiń</button>
+          <button class="btn btn--gold btn--sm" data-risk-sms="${a.id}" style="margin-top:4px">Napisz SMS o zadatku</button>
+          <div class="btn-row">
+            <button class="btn btn--line btn--sm" data-risk-sent="${a.id}">✓ SMS wysłano</button>
+            <button class="btn btn--line btn--sm" data-risk-paid="${a.id}">✓ Zadatek wpłacono</button>
           </div>
+          <button class="linkbtn" data-risk-no="${a.id}" style="align-self:flex-start;min-height:34px;padding:0">Pomiń (bez zadatku)</button>
         </div>`).join('')}
       </div>` : ''}
+      ${waiting.length ? `<section class="panel" id="${open.length ? 'czekaZadatek' : 'ostrzezenia'}" style="gap:12px">
+        <span class="eyebrow eyebrow--gold">Czekam na zadatek · ${waiting.length}</span>
+        ${waiting.map((a, i) => `<div style="display:flex;flex-direction:column;gap:4px${sep(i)}">
+          ${who(a)}
+          <span class="small" style="color:var(--text)">${esc(when(a))}${a.service ? ' · ' + esc(a.service) : ''}</span>
+          <span class="small">SMS o zadatku wysłany ${esc(UI.fmtShort(a.sms_at || a.handled_at))}</span>
+          <div class="btn-row" style="margin-top:4px">
+            <button class="btn btn--gold btn--sm" data-risk-paid="${a.id}">✓ Zadatek wpłacono</button>
+            <button class="btn btn--ghost btn--sm" data-risk-no="${a.id}">Nie wpłaci · pomiń</button>
+          </div>
+        </div>`).join('')}
+      </section>` : ''}
+      ${paid.length ? `<section class="panel panel--gold" style="gap:12px">
+        <span class="eyebrow eyebrow--gold">Wpłacone zadatki · do odliczenia w dniu zabiegu</span>
+        ${paid.map((a, i) => `<div style="display:flex;flex-direction:column;gap:4px${sep(i)}">
+          <div class="row" style="align-items:baseline">${who(a)}<span class="strong gold">${zl(a.deposit_amount)}</span></div>
+          <span class="small" style="color:var(--text)">${esc(when(a))}${a.service ? ' · ' + esc(a.service) : ''}</span>
+          <span class="small">Wpłacony ${esc(UI.fmtShort(a.deposit_paid_at))}. W planie dnia przy tej wizycie zobaczysz przypomnienie.</span>
+          <div class="btn-row" style="margin-top:4px">
+            <button class="btn btn--line btn--sm" data-dep-settle="${a.id}">Rozliczony</button>
+            <button class="btn btn--ghost btn--sm" data-dep-undo="${a.id}">Cofnij wpłatę</button>
+          </div>
+        </div>`).join('')}
+      </section>` : ''}
       ${done.length ? `<details class="panel" style="padding:14px 16px;gap:8px">
         <summary class="eyebrow" style="cursor:pointer">Historia odwołań · załatwione (14 dni): ${done.length}</summary>
-        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((a) => `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(a.name)}</span><span class="small">${esc(when(a))} · ${a.status === 'sent' ? 'SMS wysłany ' + esc(UI.fmtShort(a.handled_at)) : 'pominięte'}</span></div>`).join('')}</div>
+        <div style="display:flex;flex-direction:column;gap:2px;margin-top:8px">${done.map((a) => `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px"><span>${esc(a.name)}</span><span class="small">${esc(when(a))} · ${esc(doneLine(a))}</span></div>`).join('')}</div>
       </details>` : ''}`;
-    box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
-    box.querySelectorAll('[data-risk-sms]').forEach((b) => b.addEventListener('click', () => openRiskSms(risks.find((a) => a.id === +b.dataset.riskSms))));
-    box.querySelectorAll('[data-risk-no]').forEach((b) => b.addEventListener('click', async () => {
+    const find = (id) => risks.find((a) => a.id === +id);
+    const act = (sel, fn) => box.querySelectorAll(sel).forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
-      try { await Api.riskAlertDismiss(+b.dataset.riskNo); toast('Pominięte. Nic nie zostało wysłane.'); } catch (e) { fail(e); }
+      try { await fn(b); } catch (e) { fail(e); }
       loadRisks();
     }));
-    if (location.hash === '#ostrzezenia' && open.length) { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
+    box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open)));
+    box.querySelectorAll('[data-risk-sms]').forEach((b) => b.addEventListener('click', () => openRiskSms(find(b.dataset.riskSms))));
+    box.querySelectorAll('[data-risk-paid]').forEach((b) => b.addEventListener('click', () => openDeposit(find(b.dataset.riskPaid))));
+    act('[data-risk-sent]', async (b) => { await Api.riskAlertSmsMark(+b.dataset.riskSent); toast('Zapisane: SMS wysłany. Czekam na zadatek.'); });
+    act('[data-risk-no]', async (b) => {
+      if (!(await UI.ask('Pominąć? Ta osoba zniknie z listy, a wizyta zostanie bez zadatku.', 'Pomiń'))) return;
+      await Api.riskAlertDismiss(+b.dataset.riskNo); toast('Pominięte. Nic nie zostało wysłane.');
+    });
+    act('[data-dep-settle]', async (b) => {
+      if (!(await UI.ask('Oznaczyć zadatek jako rozliczony? Zniknie z planu dnia. Użyj też, gdy zadatek przepadł po odwołaniu.', 'Rozliczony'))) return;
+      await Api.riskAlertDepositSettle(+b.dataset.depSettle); toast('Zadatek rozliczony.'); loadPlan();
+    });
+    act('[data-dep-undo]', async (b) => {
+      if (!(await UI.ask('Cofnąć wpłatę zadatku? Kwota zniknie z planu dnia.', 'Cofnij'))) return;
+      await Api.riskAlertDepositUndo(+b.dataset.depUndo); toast('Wpłata cofnięta.'); loadPlan();
+    });
+    if (location.hash === '#ostrzezenia' && (open.length || waiting.length)) { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
+  }
+
+  // ---------- zadatek: 50% ceny rytuału ----------
+  // Cena z listy rytuałów w sklepie (ta sama co w „Wystaw paragon”). Rytuał bez ceny: kwota wpisana ręcznie.
+  const normSvc = (s) => String(s || '').toLowerCase().replace(/[®™©]/g, '').replace(/^[^:]{2,40}:\s+/, '').replace(/\s+/g, ' ').trim();
+  function findRitual(list, service) {
+    const n = normSvc(service);
+    if (!n || /^pakiet|voucher/.test(n)) return null;
+    const rs = (list || []).filter((r) => !r.deposit && r.price > 0);
+    const exact = rs.find((r) => normSvc(r.name) === n);
+    if (exact) return exact;
+    const near = rs.filter((r) => { const m = normSvc(r.name); return n.includes(m) || m.includes(n); }).sort((x, y) => y.name.length - x.name.length);
+    return near[0] || null;
+  }
+  const halfOf = (price) => Math.round(price * 50) / 100;
+  const amountTxt = (n) => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',').replace(/,00$/, '');
+  async function ritualsSafe() {
+    if (!rituals) { try { rituals = await Api.ritualsList(); } catch (e) { return []; } }
+    return rituals || [];
+  }
+
+  async function openDeposit(a) {
+    if (!a) return;
+    openSheet(`${bar('Zadatek wpłacono')}
+      <p class="lead" style="margin-top:-8px">${esc(a.name)} · ${esc(smsWhen(a.day, a.visit_at))}${a.service ? ' · ' + esc(a.service) : ''}</p>
+      <form class="panel" id="dpForm" style="gap:12px" novalidate>
+        <div class="field"><label for="dpRitual">Rytuał (do wyliczenia 50%)</label><select class="input" id="dpRitual"><option value="">Ładuję cennik…</option></select></div>
+        <div class="field"><label for="dpAmount">Wpłacony zadatek (zł)</label><input class="input" id="dpAmount" inputmode="decimal" autocomplete="off" placeholder="np. 100"></div>
+        <p class="small" id="dpInfo" style="margin:0"></p>
+        <p class="error" id="dpErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="dpSave">Zapisz wpłatę zadatku</button>
+        <p class="small" style="margin:0">W dniu zabiegu przy tej wizycie w planie dnia pokaże się kwota zadatku, żebyś pomniejszyła paragon i opłatę.</p>
+      </form>`);
+    const sel = $('#dpRitual'), inp = $('#dpAmount'), info = $('#dpInfo');
+    let touched = false;
+    const list = (await ritualsSafe()).filter((r) => !r.deposit && r.price > 0);
+    if (!sel.isConnected) return;
+    const match = findRitual(list, a.service);
+    sel.innerHTML = '<option value="">— inny / bez ceny: wpiszę kwotę —</option>' +
+      list.map((r) => `<option value="${r.id}"${match && match.id === r.id ? ' selected' : ''}>${esc(r.name)} · ${zl(r.price)}</option>`).join('');
+    const calc = () => {
+      const r = list.find((x) => String(x.id) === sel.value);
+      if (r && !touched) inp.value = amountTxt(halfOf(r.price));
+      info.textContent = r ? '50% z ' + zl(r.price) + ' (' + r.name + ') = ' + zl(halfOf(r.price)) + '. Kwotę możesz poprawić.'
+        : list.length ? 'Ten rytuał nie ma ceny w cenniku. Wpisz kwotę zadatku ręcznie.' : 'Nie udało się pobrać cennika. Wpisz kwotę zadatku ręcznie.';
+    };
+    sel.addEventListener('change', () => { touched = false; calc(); });
+    inp.addEventListener('input', () => { touched = true; });
+    calc();
+    if (!match) inp.focus();
+    $('#dpForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#dpErr'); err.hidden = true;
+      const amount = toAmount(inp.value);
+      if (!(amount >= 1 && amount <= 2000)) { err.textContent = 'Wpisz kwotę zadatku (od 1 do 2000 zł).'; err.hidden = false; return; }
+      const btn = $('#dpSave'); btn.disabled = true;
+      try {
+        await Api.riskAlertDeposit(a.id, amount);
+        loadRisks(); loadPlan();
+        $('#dpForm').outerHTML = `<section class="panel panel--gold" style="gap:10px">
+          <span class="eyebrow eyebrow--gold">Zapisane</span>
+          <span class="strong" style="font-size:17px">Zadatek ${zl(amount)} · ${esc(a.name)}</span>
+          <span class="small" style="color:var(--text-2)">Wpłata przez stronę (produkt „Zadatek za wizytę”): paragon wystawił już sklep, nic więcej nie trzeba. Wpłata BLIK-iem na telefon albo gotówką: wystaw paragon za zadatek.</span>
+          <button class="btn btn--line" id="dpReceipt">Wystaw paragon za zadatek ${zl(amount)}</button>
+          <button class="btn btn--ghost" id="dpClose">Gotowe</button>
+        </section>`;
+        $('#dpClose').addEventListener('click', closeSheet);
+        $('#dpReceipt').addEventListener('click', () => openReceipt({ deposit: amount, name: a.name, phone: a.phone, card_id: a.card_id }));
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    });
   }
 
   // Zapamiętany zwrot do osoby (np. „Pani Iwonko”), żeby nie poprawiać go drugi raz
@@ -418,9 +538,8 @@
     const remember = () => { const g = $('#rsGreet').value.trim(); if (g && g !== greetFor(a.name, pani)) greetSet(a, g); };
     const ph = $('#rsPhone');
     if (ph) ph.addEventListener('click', async (e) => {
-      if (!(await UI.ask('Otworzę SMS w Twoim telefonie z gotową treścią. Po wysłaniu oznaczę ostrzeżenie jako załatwione.', 'Otwórz'))) { e.preventDefault(); return; }
+      if (!(await UI.ask('Otworzę SMS w Twoim telefonie z gotową treścią. Gdy go wyślesz, kliknij przy ostrzeżeniu „SMS wysłano”.', 'Otwórz'))) { e.preventDefault(); return; }
       remember();
-      Api.riskAlertDismiss(a.id).catch(() => {});
       setTimeout(() => { closeSheet(); loadRisks(); }, 300);
     });
     $('#rsForm').addEventListener('submit', async (e) => {
@@ -464,6 +583,7 @@
         <summary class="eyebrow eyebrow--gold" style="cursor:pointer">Wolne godziny · dziś i ${GAP_DAYS} kolejnych dni${forecast.some((f) => f.windows.some((w) => !w.sent)) ? ' · są wolne' : ''}</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">${forecast.map(dayRow).join('')}</div>
         <div id="gapAuto"></div>
+        <div id="reviewStampBox"></div>
         <p class="small" style="margin:10px 0 0">Liczę z planu dnia, godzin pracy i dni wolnych. Oferta o wolnych godzinach wychodzi tylko wtedy, gdy ją wyślesz. Po odwołaniu wizyty oferta wychodzi sama, ale między 21:00 a 8:00 czeka do rana. SMS idzie tylko na polskie numery.</p>
       </details>` : ''}
       ${rest.length ? `<details class="panel" style="padding:14px 16px;gap:8px"${live ? ' open' : ''}>
@@ -480,6 +600,7 @@
     box.querySelectorAll('[data-gap-day]').forEach((b) => b.addEventListener('click', () => openGapSend(forecast.find((f) => f.day === b.dataset.gapDay))));
     box.querySelectorAll('[data-gap-sms]').forEach((b) => b.addEventListener('click', () => openGapPhone(b.dataset.gapSms)));
     loadGapAuto();
+    loadReviewStamp();
     if (location.hash === '#wolne') { history.replaceState(null, '', location.pathname); box.scrollIntoView({ block: 'start' }); }
   }
 
@@ -543,6 +664,25 @@
     </div>`;
     box.querySelectorAll('[data-auto]').forEach((b) => b.addEventListener('click', async () => {
       try { await Api.gapSmsAutoSet(b.dataset.auto === '1'); loadGapAuto(); } catch (e) { toast(e.message); }
+    }));
+  }
+
+  // Pieczątka za opinię w Google (test z włącznikiem)
+  async function loadReviewStamp() {
+    const box = $('#reviewStampBox');
+    if (!box) return;
+    let on;
+    try { on = await Api.reviewStampGet(); } catch (e) { box.innerHTML = ''; return; } // baza jeszcze bez opinie-google.sql
+    box.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-soft)">
+      <span class="eyebrow">Pieczątka za opinię w Google</span>
+      <div class="tabs tabs--small" role="radiogroup" aria-label="Pieczątka za opinię w Google">
+        <button role="radio" data-rs="1" aria-selected="${on}">Włączona</button>
+        <button role="radio" data-rs="0" aria-selected="${!on}">Wyłączona</button>
+      </div>
+      <span class="small">${on ? 'Klientka dostaje +1 pieczątkę raz, gdy oznaczy na karcie „Już wystawiłam opinię” (albo Ty w panelu).' : 'Prośby o opinię wychodzą dalej, ale bez pieczątki.'}</span>
+    </div>`;
+    box.querySelectorAll('[data-rs]').forEach((b) => b.addEventListener('click', async () => {
+      try { await Api.reviewStampSet(b.dataset.rs === '1'); loadReviewStamp(); } catch (e) { toast(e.message); }
     }));
   }
 
@@ -882,8 +1022,14 @@
     if (!box) return;
     let plan;
     const day = planDay;
-    try { plan = day < 2 ? await Api.planList(Rules.dayPL(day)) : await Api.planRange(Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)); } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
+    let deps = [];
+    try {
+      const [from, to] = day < 2 ? [Rules.dayPL(day), Rules.dayPL(day)] : [Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)];
+      [plan, deps] = await Promise.all([day < 2 ? Api.planList(from) : Api.planRange(from, to),
+        Api.depositsPlan ? Api.depositsPlan(from, to).catch(() => []) : []]);
+    } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
+    const depOf = (p) => (deps || []).find((d) => String(d.plan_id) === String(p.id));
     if (!plan.length && day < 2 && absenceNote(Rules.dayPL(day))) { box.innerHTML = offBanner(absenceNote(Rules.dayPL(day))); return; }
     if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">' + (day < 2 ? 'Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.' : 'Na kolejne ' + PLAN_AHEAD + ' dni nie ma jeszcze żadnych wizyt.') + '</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
@@ -892,7 +1038,8 @@
       const done = p.status !== 'planned';
       const tags = (p.booking_id ? ' <span class="tag">Booksy</span>' : '') + (p.conflict ? ' <span class="tag">kolizja</span>' : '') +
         (!day && p.bday_today && p.birthday_used_year !== Rules.todayPL().y ? ' <span class="tag tag--solid">urodziny</span>' : '') +
-        (refWelcome.has(p.card_id) && !done ? ' <span class="tag tag--solid">z polecenia −10%</span>' : '');
+        (refWelcome.has(p.card_id) && !done ? ' <span class="tag tag--solid">z polecenia −10%</span>' : '') +
+        (depOf(p) ? ' <span class="tag tag--solid">zadatek ' + esc(zl(depOf(p).amount)) + '</span>' : '');
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : done || p.booking_id ? '' : 'bez godziny · ') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
@@ -905,8 +1052,14 @@
         </button>
         ${done ? '' : `<button class="plus plus--ghost" data-plan-del="${esc(p.id)}" aria-label="Usuń z planu: ${esc(p.name)}">×</button>${day || !p.card_id ? '' : `<button class="plus" data-open="${esc(p.card_id)}" data-plan="${esc(p.id)}" aria-label="Zapisz wizytę: ${esc(p.name)}">›</button>`}`}
         ${timeLink}
+        ${depOf(p) ? depNote(p, depOf(p), !day) : ''}
       </div>`;
     };
+    const depNote = (p, d, today) => `<div class="hint hint--reward" style="flex-basis:100%;display:flex;flex-direction:column;gap:6px;margin:2px 0 8px">
+        <span class="strong">Zadatek wpłacony: ${esc(zl(d.amount))}</span>
+        <span class="small" style="color:var(--text)">Pomniejsz paragon i opłatę od klientki o ${esc(zl(d.amount))}${d.paid_at ? ' (wpłata ' + esc(UI.fmtShort(d.paid_at)) + ')' : ''}.</span>
+        ${today ? `<div class="btn-row"><button class="btn btn--gold btn--sm" data-dep-rc="${esc(p.id)}">Paragon minus zadatek</button><button class="btn btn--ghost btn--sm" data-dep-done="${esc(d.alert_id)}">Rozliczony</button></div>` : ''}
+      </div>`;
     if (day < 2) {
       const off = absenceNote(Rules.dayPL(day));
       box.innerHTML = (off ? offBanner(off) : '') + '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
@@ -928,6 +1081,16 @@
     }));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', () => openPlanCancel(pick(b.dataset.planDel))));
+    box.querySelectorAll('[data-dep-rc]').forEach((b) => b.addEventListener('click', () => {
+      const p = pick(b.dataset.depRc), d = depOf(p);
+      openReceipt({ service: p.service, minus: d.amount, alertId: d.alert_id, name: p.name, phone: p.phone, card_id: p.card_id });
+    }));
+    box.querySelectorAll('[data-dep-done]').forEach((b) => b.addEventListener('click', async () => {
+      if (!(await UI.ask('Oznaczyć zadatek jako rozliczony? Przypomnienie zniknie z planu.', 'Rozliczony'))) return;
+      b.disabled = true;
+      try { await Api.riskAlertDepositSettle(+b.dataset.depDone); toast('Zadatek rozliczony.'); } catch (e) { fail(e); }
+      loadPlan(); loadRisks();
+    }));
   }
 
   // kto ma kartę w aplikacji (otwartą z ikony); null = baza jeszcze bez tej funkcji, wtedy jak dawniej
@@ -1136,12 +1299,14 @@
   // ---------- karta klientki ----------
   async function openCard(id, planId) {
     currentPlan = planId || null;
+    currentDep = null;
     if (currentPlan) {
       try {
         const plan = await Api.planList();
         const p = plan.find((x) => String(x.id) === String(currentPlan));
         if (p && p.service) lastService = p.service;
         if (p && p.status !== 'planned') currentPlan = null;
+        if (p && Api.depositsPlan) currentDep = ((await Api.depositsPlan(Rules.dayPL(0), Rules.dayPL(0)).catch(() => [])) || []).find((d) => String(d.plan_id) === String(p.id)) || null;
       } catch (e) { /* bez planu */ }
     }
     try { [current] = await Promise.all([Api.getCard(id), loadAppStatus()]); } catch (e) { return fail(e); }
@@ -1164,6 +1329,7 @@
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
       </div>
       ${currentPlan ? '<p class="small gold" style="margin:0">Wizyta z planu dnia. Po zapisaniu odhaczy się w planie.</p>' : ''}
+      ${currentDep ? `<div class="hint hint--reward" style="display:flex;flex-direction:column;gap:4px"><span class="strong">Zadatek wpłacony: ${esc(zl(currentDep.amount))}</span><span class="small" style="color:var(--text)">Pomniejsz paragon i opłatę od klientki o tę kwotę.</span></div>` : ''}
       ${c.ref_welcome ? `<section class="panel panel--gold" style="gap:6px"><span class="eyebrow eyebrow--gold">Z polecenia${c.referred_by_name ? ' · ' + esc(c.referred_by_name) : ''}</span><span class="strong">Pierwszy pojedynczy rytuał −10%</span><span class="small" style="color:var(--text-2)">Rabat zapisze się sam przy „Pojedynczy rytuał”. Polecająca dostanie pieczątkę po tej wizycie.</span></section>` : ''}
       ${bdayAvail ? `<section class="panel panel--gold bday-today" style="gap:10px"><span class="eyebrow eyebrow--gold">Urodziny dziś · −20%</span><span class="small" style="color:var(--text-2)">Rabat urodzinowy na dzisiejszy rytuał. Nie łączy się z innymi promocjami, więc nie dodaje pieczątki.</span><button class="btn btn--gold" id="bdayBtn">Rytuał urodzinowy −20%</button></section>` : ''}
       <section class="panel">
@@ -1178,6 +1344,7 @@
         <button class="btn btn--ghost" data-mode="package_visit">Wizyta z pakietu · bez pieczątki</button>
         ${c.stamps > 0 ? '<button class="linkbtn" id="undoBtn" style="align-self:center">Cofnij ostatnią pieczątkę</button>' : ''}
       </section>
+      <section class="panel" id="pkgBox" style="gap:10px" hidden></section>
       <div class="btn-row">
         ${currentPlan ? '' : '<button class="btn btn--ghost" data-plan-btn="0">+ Plan dziś</button>'}
         <button class="btn btn--ghost" data-plan-btn="1">+ Plan jutro</button>
@@ -1199,6 +1366,7 @@
         <div class="row"><span class="small">Telefon</span><span>${c.phone ? `<a href="tel:${esc(c.phone.replace(/\s/g, ''))}">${esc(c.phone)}</a>` : '—'}</span></div>
         <div class="row"><span class="small">Urodziny</span><span>${esc(UI.fmtBday(c.bday_day, c.bday_month) || '—')}${c.birthday_used_year === y ? ' <span class="tag">wykorzystane ' + y + '</span>' : ''}</span></div>
         <label class="check" id="smsOkRow" hidden><input type="checkbox" id="smsOk"> <span>Zgoda na SMS (życzenia urodzinowe przychodzą też SMS-em)</span></label>
+        <label class="check" id="reviewRow" hidden><input type="checkbox" id="reviewDone"> <span>Wystawiła opinię w Google (nie dostaje już próśb o opinię)</span></label>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
         ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : ''}
         ${c.ref_count ? `<div class="row"><span class="small">Poleciła</span><span>${c.ref_count} ${UI.plural(c.ref_count, 'osobę', 'osoby', 'osób')}${c.ref_rewarded < c.ref_count ? ' · ' + (c.ref_count - c.ref_rewarded) + ' przed wizytą' : ''}</span></div>` : ''}
@@ -1229,6 +1397,7 @@
       openPlanAdd(c, o === 2 ? Rules.dayPL(2) : Rules.dayPL(o), svc(), true);
     }));
     on('#editBtn', () => openEdit());
+    fillPkg(c);
     on('#delBtn', async () => {
       if (!(await UI.ask('Usunąć kartę: ' + c.name + '? Tego nie da się cofnąć.', 'Usuń'))) return;
       try { await Api.deleteCard(c.id); toast('Usunięto kartę.'); closeSheet(); } catch (e) { fail(e); }
@@ -1247,6 +1416,38 @@
       try { await Api.setSmsConsent(c.id, smsOk.checked); toast(smsOk.checked ? 'Zapisano zgodę na SMS.' : 'Bez SMS dla tej karty.'); }
       catch (e) { smsOk.checked = !smsOk.checked; fail(e); }
     });
+    const revDone = $('#reviewDone');
+    Api.reviewDone(c.id).then((ok) => { revDone.checked = !!ok; $('#reviewRow').hidden = false; }).catch(() => {});
+    revDone.addEventListener('change', async () => {
+      try { await Api.setReviewDone(c.id, revDone.checked); toast(revDone.checked ? 'Zapisano: opinia wystawiona.' : 'Prośby o opinię znów włączone.'); if (revDone.checked) { const fresh = await Api.getCard(c.id).catch(() => null); if (fresh && fresh.stamps !== c.stamps) { current = fresh; Api.notifyStamp(c.id, fresh.stamps).catch(() => {}); toast('Dopisano pieczątkę za opinię: ' + c.name + ' (' + fresh.stamps + '/10).'); renderCard(); } } }
+      catch (e) { revDone.checked = !revDone.checked; fail(e); }
+    });
+  }
+
+  // Pakiet klientki: ile rytuałów wykorzystała i kiedy (to samo widzi w aplikacji w zakładce „Pakiet”).
+  async function fillPkg(c, vs) {
+    if (!vs) { try { vs = await Api.cardVisits(c.id); } catch (e) { vs = c.visits || []; } }
+    const box = sheetIn.querySelector('#pkgBox');
+    if (!box || !current || current.id !== c.id) return;
+    const p = Rules.packages(vs)[0];
+    if (!p || (p.done && Date.now() - new Date(p.used[p.used.length - 1].at) > 30 * 864e5)) { box.hidden = true; return; }
+    const n = p.used.length;
+    const canSize = p.boughtAt && !p.fromShop;
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="row"><span class="eyebrow eyebrow--gold">${p.done ? 'Pakiet wykorzystany' : 'Pakiet'}</span><span class="strong gold">${p.size ? n + ' / ' + p.size : n + ' ' + UI.plural(n, 'rytuał', 'rytuały', 'rytuałów')}</span></div>
+      ${p.service ? `<span class="small">${esc(p.service)}${p.boughtAt ? ' · kupiony ' + esc(UI.fmtShort(p.boughtAt)) : ''}</span>` : ''}
+      ${p.size ? `<span class="strong gold">${p.done ? 'Wykorzystane wszystkie ' + p.size : 'Wykorzystane ' + n + ' z ' + p.size + ' · ' + UI.plural(p.left, 'został', 'zostały', 'zostało') + ' ' + p.left}</span>` : ''}
+      ${n ? `<div>${p.used.map((u, k) => `<div class="list-row"><span class="small">${k + 1}. ${esc(u.service && !/\d+\s*wizyt/i.test(u.service) ? u.service : 'Rytuał z pakietu')}</span><span class="small">${esc(UI.fmtDate(u.at))}</span></div>`).join('')}</div>` : '<span class="small">Nie było jeszcze wizyty z tego pakietu.</span>'}
+      ${canSize && !p.size ? `<span class="small gold">Ile rytuałów ma ten pakiet? Klientka zobaczy w aplikacji, ile jej zostało.</span>
+        <div class="btn-row">${[3, 5, 10].map((k) => `<button class="btn btn--line btn--sm" data-pkg-size="${k}">${k}</button>`).join('')}<button class="btn btn--ghost btn--sm" data-pkg-size="0">Inna</button></div>` : ''}
+      ${canSize && p.size ? '<button class="linkbtn" data-pkg-size="0" style="align-self:flex-start">Zmień liczbę rytuałów w pakiecie</button>' : ''}`;
+    box.querySelectorAll('[data-pkg-size]').forEach((b) => b.addEventListener('click', async () => {
+      let k = +b.dataset.pkgSize;
+      if (!k) { k = parseInt(prompt('Ile rytuałów ma pakiet?', p.size || ''), 10); if (!k) return; }
+      try { fillPkg(c, await Api.setPackageSize(c.id, k)); toast('Zapisano: pakiet ' + k + ' ' + UI.plural(k, 'rytuał', 'rytuały', 'rytuałów') + '.'); }
+      catch (e) { fail(/could not find the function|schema cache/i.test(e.message || '') ? new Error('Najpierw uruchom w Supabase plik pakiety-i-historia.sql.') : e); }
+    }));
   }
 
   function on(sel, fn) { const el = sheetIn.querySelector(sel); if (el) el.addEventListener('click', fn); }
@@ -1458,12 +1659,16 @@
   let rituals = null;
   let rc = null;
   let rcPoll = 0;
-  const newRc = () => ({ productId: null, off: 0, amount: '', payment: null, transferOk: false, name: '', email: '', phone: '' });
+  let rcPre = null;
+  const newRc = () => ({ productId: null, off: 0, amount: '', payment: null, transferOk: false, name: '', email: '', phone: '', minus: 0 });
   const toAmount = (v) => { const n = Number(String(v).replace(',', '.').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
   const rcRitual = () => (rituals || []).find((r) => r.id === rc.productId) || null;
 
-  function openReceipt() {
+  // pre (nieobowiązkowe): { service, minus, alertId } = rytuał pomniejszony o zadatek; { deposit } = paragon za sam zadatek;
+  // name, phone, card_id = dane klientki
+  function openReceipt(pre) {
     rc = newRc();
+    rcPre = pre || null;
     openSheet(bar('Wystaw paragon') + `
       <div id="rcResult"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
@@ -1508,8 +1713,25 @@
     bindRcHints();
     $('#rcIssue').addEventListener('click', issueRc);
     $('#rcReload').addEventListener('click', () => loadRcHistory());
-    loadRituals();
+    loadRituals().then(applyRcPre);
     loadRcHistory();
+    if (rcPre) fillRcClient(rcPre);
+  }
+
+  async function fillRcClient(pre) {
+    const set = (key, sel, v) => { if (v && !rc[key]) { rc[key] = v; const el = $(sel); if (el) el.value = v; } };
+    set('name', '#rcName', pre.name); set('phone', '#rcPhone', pre.phone);
+    if (pre.card_id) { try { const c = await Api.getCard(pre.card_id); if (c && rc) set('email', '#rcEmail', c.email); } catch (e) { /* bez e-maila */ } }
+  }
+
+  function applyRcPre() {
+    const pre = rcPre;
+    if (!pre || !rituals || !$('#rcList')) return;
+    const r = pre.deposit ? rituals.find((x) => x.deposit) : findRitual(rituals, pre.service);
+    if (r) { const b = sheetIn.querySelector('[data-rc="' + r.id + '"]'); if (b) b.click(); }
+    if (pre.deposit && r) { rc.amount = amountTxt(pre.deposit); setRcAmount(); }
+    else if (pre.minus && r) { rc.minus = pre.minus; rc.off = 0; setRcAmount(); }
+    else if (pre.minus) { rc.minus = pre.minus; updateRc(); }
   }
 
   async function loadRituals() {
@@ -1530,7 +1752,8 @@
       const wasDeposit = !!(rcRitual() || {}).deposit;
       rc.productId = +b.dataset.rc;
       const r = rcRitual();
-      if (r.deposit) { rc.off = null; if (!wasDeposit) rc.amount = ''; }
+      if (r.deposit) { rc.off = null; rc.minus = 0; if (!wasDeposit) rc.amount = ''; }
+      else if (rc.minus) rc.off = rc.off == null || wasDeposit ? 0 : rc.off;
       else rc.off = rc.off == null || wasDeposit ? 0 : rc.off;
       setRcAmount();
       if (r.deposit && !first) { const a = $('#rcAmount'); if (a) a.focus(); }
@@ -1540,7 +1763,7 @@
 
   function setRcAmount() {
     const r = rcRitual();
-    if (r && !r.deposit && rc.off != null) rc.amount = (Math.round(r.price * (100 - rc.off)) / 100).toFixed(2).replace('.', ',');
+    if (r && !r.deposit && rc.off != null) rc.amount = Math.max(Math.round(r.price * (100 - rc.off)) / 100 - (rc.minus || 0), 0).toFixed(2).replace('.', ',');
     const el = $('#rcAmount'); if (el) el.value = rc.amount;
     updateRc();
   }
@@ -1556,7 +1779,8 @@
     const offBox = $('#rcOff'); if (offBox) offBox.hidden = dep;
     const lab = sheetIn.querySelector('label[for="rcAmount"]'); if (lab) lab.textContent = dep ? 'Kwota zadatku (zł)' : 'Do zapłaty (zł)';
     const info = $('#rcOffInfo');
-    if (info) info.textContent = dep ? 'Na paragonie: „' + r.name + '”. Przy rytuale wystawiasz paragon już tylko na resztę kwoty.'
+    if (info) info.textContent = rc.minus && !dep ? (r ? 'Cena ' + zl(r.price) + (rc.off ? ' z rabatem −' + rc.off + '%' : '') + ' minus wpłacony zadatek ' + zl(rc.minus) + ' = ' + zl(amount) + '. Na paragonie różnica do ceny pokaże się jako rabat.' : 'Wybierz rytuał. Od ceny odejmij zadatek ' + zl(rc.minus) + '.')
+      : dep ? 'Na paragonie: „' + r.name + '”. Przy rytuale wystawiasz paragon już tylko na resztę kwoty.'
       : r && amount && amount < r.price ? `Na paragonie: ${r.name} ${zl(r.price)} i rabat ${zl(r.price - amount)}.` : '−15% za 5. rytuał, −20% w urodziny, −30% za 10. rytuał.';
     const box = $('#rcPayInfo');
     if (box) {
@@ -1610,7 +1834,7 @@
       : name.length < 2 ? 'Wpisz imię i nazwisko.' : !EMAIL_RE.test(email) ? 'Wpisz poprawny e-mail, na który przyjdzie e-paragon.' : '';
     if (problem) { err.textContent = problem; err.hidden = false; return; }
     const payLabel = RC_PAY.find((x) => x[0] === rc.payment)[1].toLowerCase();
-    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.deposit ? 'Zadatek na poczet rezerwacji terminu' : r.name}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
+    if (!(await UI.ask(`Wystawić paragon fiskalny na ${zl(amount)}? ${r.deposit ? 'Zadatek na poczet rezerwacji terminu' : r.name + (rc.minus ? ' (po odliczeniu zadatku ' + zl(rc.minus) + ')' : '')}, płatność: ${payLabel}. E-paragon pójdzie na ${email}.`, 'Wystaw paragon'))) return;
     const btn = $('#rcIssue');
     btn.disabled = true;
     btn.textContent = 'Wysyłam do sklepu…';
@@ -1620,6 +1844,10 @@
         product_id: r.id, amount, payment: rc.payment, name, email, phone: phone || undefined
       });
       showRcResult(res);
+      if (rcPre && rcPre.alertId && rc.minus && !r.deposit) {
+        Api.riskAlertDepositSettle(rcPre.alertId).then(() => { loadPlan(); loadRisks(); }).catch(() => {});
+        rcPre = null;
+      }
       rc = newRc();
       sheetIn.querySelectorAll('#rcAmount, #rcName, #rcEmail, #rcPhone').forEach((x) => { x.value = ''; });
       $('#rcRest').hidden = true;
