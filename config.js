@@ -21,6 +21,9 @@ window.APP_CONFIG = {
   // 'test' = tylko dla kart z listy niżej (zanim Google zatwierdzi kartę), true = dla wszystkich, false = ukryty.
   GOOGLE_WALLET: 'test',
   GOOGLE_WALLET_TEST_CARDS: [],
+  // Skąd wychodzą automatyczne SMS-y (tylko opisy w panelu; o samej wysyłce decyduje sekret SMS_PROVIDER w Supabase):
+  // 'telefon' = z karty SIM telefonu studia (do 1530 znaków, z polskimi literami), 'smsplanet' = bramka SMSPLANET (do 459 znaków).
+  SMS_VIA: 'telefon',
 
   // Rytuały do wyboru przy dodawaniu pieczątki
   SERVICES: [

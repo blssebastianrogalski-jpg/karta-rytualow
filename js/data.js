@@ -651,7 +651,8 @@
         if (a.sms_at) throw new Error('SMS do tej osoby już wyszedł.');
         const msg = String(text || '').trim();
         if (msg.length < 10) throw new Error('Wpisz treść SMS-a.');
-        if (msg.length > 459) throw new Error('SMS jest za długi (najwyżej 459 znaków, czyli 3 części).');
+        const max = CFG.SMS_VIA === 'telefon' ? 1530 : 459;
+        if (msg.length > max) throw new Error('SMS jest za długi (najwyżej ' + max + ' znaków).');
         const now = new Date().toISOString();
         Object.assign(a, { status: a.status === 'paid' ? 'paid' : 'sent', sms_text: msg, sms_at: now, handled_at: a.handled_at || now }); save(db);
         return { phone: a.phone, demo: true };
