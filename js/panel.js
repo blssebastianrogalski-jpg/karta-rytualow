@@ -32,9 +32,12 @@
     referral: 'Pieczątka za polecenie',
     gap: 'Dodatkowa pieczątka za wolny termin',
     review: 'Pieczątka za opinię',
+    booksy: 'Wizyta z Booksy (historia)',
     skipped: 'Odwołana',
     planned: 'Zaplanowana'
   };
+  // Wizyty z historii Booksy (kind booksy) to tylko historia: nie liczą się jako wizyty zapisane w aplikacji.
+  const appVisits = (c) => (c.visits || []).filter((v) => v.kind !== 'booksy');
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const fail = (e) => toast(e.message || 'Coś poszło nie tak.', 'error');
   const appUrl = () => CFG.APP_URL || new URL('./', location.href).href;
@@ -1378,7 +1381,7 @@
       <section style="display:flex;flex-direction:column;gap:10px" id="incBox" hidden></section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <span class="eyebrow">Historia wizyt</span>
-        <div class="panel panel--tight">${(c.visits || []).length ? c.visits.map((v) => `<div class="list-row"><span>${esc(MODE_LABEL[v.kind])}${v.service ? ' · ' + esc(v.service) : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}${v.kind === 'package_visit' || v.kind === 'birthday' ? ' <span class="tag">bez pieczątki</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('') : '<p class="small" style="padding:12px 0;margin:0">Brak wizyt.</p>'}</div>
+        <div class="panel panel--tight">${(c.visits || []).length ? c.visits.map((v) => `<div class="list-row"><span>${esc(MODE_LABEL[v.kind])}${v.service ? ' · ' + esc(v.service) : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}${v.kind === 'package_visit' || v.kind === 'birthday' || v.kind === 'booksy' ? ' <span class="tag">bez pieczątki</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('') : '<p class="small" style="padding:12px 0;margin:0">Brak wizyt.</p>'}</div>
       </section>
       <button class="btn btn--danger btn--sm" id="delBtn" style="align-self:center">Usuń kartę</button>`);
 
@@ -1390,7 +1393,7 @@
       try { current = await Api.removeStamp(c.id); toast('Cofnięto pieczątkę (' + current.stamps + '/10).'); renderCard(); } catch (e) { fail(e); }
     });
     on('#bdayBtn', async () => {
-      try { current = await Api.useBirthday(c.id, svc(), currentPlan); current = (await Api.getCard(c.id).catch(() => null)) || current; currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); if (c.referred_by_name && !(c.visits || []).length) refReward(c); } catch (e) { fail(e); }
+      try { current = await Api.useBirthday(c.id, svc(), currentPlan); current = (await Api.getCard(c.id).catch(() => null)) || current; currentPlan = null; toast('Rabat urodzinowy −20% zapisany: ' + c.name + '.', 'reward'); renderCard(); if (c.referred_by_name && !appVisits(c).length) refReward(c); } catch (e) { fail(e); }
     });
     document.querySelectorAll('[data-plan-btn]').forEach((b) => b.addEventListener('click', () => {
       const o = +b.dataset.planBtn;
@@ -1515,7 +1518,7 @@
       else if (n === 10) toast('10. rytuał ' + first + ': nalicz rabat −30%.', 'reward');
       else toast('Dodano pieczątkę: ' + c.name + ' (' + n + '/10).');
       renderCard(mode === 'package_visit' ? null : n);
-      if (c.referred_by_name && !(c.visits || []).length) refReward(c);
+      if (c.referred_by_name && !appVisits(c).length) refReward(c);
     } catch (e) { btn.disabled = false; fail(e); }
   }
 
@@ -1557,7 +1560,7 @@
 
   // ---------- edycja / nowa karta ----------
   // Pieczątki z papierowej karty można ustawić przy nowej karcie albo na karcie bez żadnej wizyty w aplikacji.
-  const canTransfer = (c) => !c.cards_completed && !(c.visits || []).length;
+  const canTransfer = (c) => !c.cards_completed && !appVisits(c).length;
   const stampsField = (n) => `<div class="field"><label for="fStamps">Pieczątki przeniesione z papierowej karty</label><select class="input" id="fStamps">${Array.from({ length: 10 }, (_, i) => `<option value="${i}"${i === n ? ' selected' : ''}>${i}</option>`).join('')}</select></div>`;
   function cardForm(c, isNew) {
     return `
