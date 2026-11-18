@@ -1119,8 +1119,18 @@
   async function loadInstallStats() {
     const box = $('#instStats');
     if (!box) return;
-    const st = await fetchInstallStats();
+    const [st, apps] = await Promise.all([fetchInstallStats(), Api.appStatus().catch(() => ({}))]);
     if (!st || !$('#instStats')) { box.innerHTML = ''; return; }
+    // porównanie: stare słowa instrukcji (przed CFG.INSTALL_NEW_WORDS_FROM) i nowe (od tego dnia)
+    const sw = CFG.INSTALL_NEW_WORDS_FROM;
+    const wSum = (w, pl) => st.funnel.filter((f) => f.words === w && f.platform === pl).reduce((a, f) => a + (f.viewed || 0), 0);
+    const newApps = (w, pl) => Object.values(apps || {}).filter((a) => a.platform === pl && a.first >= st.from && (w === 'nowa' ? Rules.dayPL(0) >= sw && a.first.slice(0, 10) >= sw : a.first.slice(0, 10) < sw)).length;
+    const cmp = sw ? `<span class="eyebrow">Stare i nowe słowa instrukcji (zmiana ${esc(UI.fmtShort(sw + 'T12:00:00'))})</span>
+        <div class="panel panel--tight">
+          <div class="list-row"><span class="small">Krok</span><span class="small">stare · nowe</span></div>
+          ${['android', 'iphone'].map((pl) => { const L = pl === 'android' ? 'Android' : 'iPhone'; return `<div class="list-row"><span>${L}: widziały instrukcję</span><span>${wSum('stara', pl)} · ${wSum('nowa', pl)}</span></div><div class="list-row"><span>${L}: nowe karty na ekranie</span><span>${newApps('stara', pl)} · ${newApps('nowa', pl)}</span></div>`; }).join('')}
+        </div>
+        <span class="small" style="color:var(--muted)">Przy kilkunastu wejściach różnica o 1 albo 2 osoby to jeszcze przypadek, nie wynik.</span>` : '';
     const sum = (pl, k) => st.funnel.filter((f) => f.platform === pl).reduce((a, f) => a + (f[k] || 0), 0);
     const c = st.cards, noApp = c.total - c.app;
     const seen = st.no_app_seen || {};
@@ -1143,6 +1153,7 @@
           ${row('Nowe karty na ekranie telefonu', c.new_android, c.new_iphone)}
           ${row('Klientki bez aplikacji, które otworzyły link', seen.android || 0, seen.iphone || 0)}
         </div>
+        ${cmp}
         <span class="small" style="color:var(--muted)">Na iPhonie telefon nie mówi stronie, czy ktoś dodał ikonę, więc widać tylko początek i koniec drogi.</span>
         <span class="eyebrow">Dlaczego bez aplikacji (${rTotal} ${UI.plural(rTotal, 'odpowiedź', 'odpowiedzi', 'odpowiedzi')})</span>
         <div class="panel panel--tight">${WHY.map((w) => `<div class="list-row"><span>${w[1]}</span><span>${rs[w[0]] || 0}</span></div>`).join('')}</div>
