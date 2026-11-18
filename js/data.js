@@ -365,12 +365,38 @@
       }),
       referralInfo: (code) => run(() => { const c = load().cards.find((x) => x.code === String(code || '').toUpperCase().trim()); return c ? { name: c.name.split(/\s+/)[0] } : null; }),
       cardByLink: (code) => run(() => { const c = load().cards.find((x) => x.link_code === code); return c ? c.token : null; }),
-      markAppOpen: (token) => run(() => {
+      markAppOpen: (token, platform) => run(() => {
         const db = load(); const c = db.cards.find((x) => x.token === token);
-        if (c) { const now = new Date().toISOString(); c.app_opened_at = c.app_opened_at || now; c.app_seen_at = now; save(db); }
+        if (c) { const now = new Date().toISOString(); c.app_opened_at = c.app_opened_at || now; c.app_seen_at = now; if (platform) c.app_platform = platform; save(db); }
       }),
       appStatus: () => run(() => {
-        guard(); const m = {}; load().cards.forEach((c) => { if (c.app_opened_at) m[c.id] = { first: c.app_opened_at, last: c.app_seen_at }; }); return m;
+        guard(); const m = {}; load().cards.forEach((c) => { if (c.app_opened_at) m[c.id] = { first: c.app_opened_at, last: c.app_seen_at, platform: c.app_platform || null }; }); return m;
+      }),
+      // pomiar instalacji (w demo tylko odpowiedzi z panelu i przykładowy lejek)
+      logInstallEvent: async () => null,
+      installReasonSet: (id, reason, note) => run(() => {
+        guard(); const db = load(); db.installReasons = db.installReasons || {};
+        if (!reason) { delete db.installReasons[id]; save(db); return null; }
+        db.installReasons[id] = { reason, note: (note || '').trim().slice(0, 200) || null, at: new Date().toISOString() };
+        save(db); return db.installReasons[id];
+      }),
+      installStats: () => run(() => {
+        guard(); const db = load(); const cards = db.cards; const rm = db.installReasons || {};
+        const by = (p) => cards.filter((c) => c.app_platform === p).length;
+        const reasons = {}; Object.values(rm).forEach((r) => { reasons[r.reason] = (reasons[r.reason] || 0) + 1; });
+        return {
+          from: new Date(Date.now() - 7 * 864e5).toISOString(),
+          funnel: [
+            { platform: 'android', words: 'nowa', viewed: 9, in_app: 3, prompt: 5, accepted: 4, dismissed: 1 },
+            { platform: 'iphone', words: 'nowa', viewed: 7, in_app: 2, prompt: 0, accepted: 0, dismissed: 0 }
+          ],
+          cards: { total: cards.length, app: cards.filter((c) => c.app_opened_at).length, android: by('android'), iphone: by('iphone'), other: by('inny'),
+            unknown: cards.filter((c) => c.app_opened_at && !c.app_platform).length, new_app: 3, new_android: 2, new_iphone: 1 },
+          no_app_seen: { android: 1, iphone: 2 },
+          reasons,
+          notes: Object.entries(rm).map(([id, r]) => ({ name: (cards.find((c) => c.id === id) || {}).name || '', ...r })).sort((a, b) => (a.at < b.at ? 1 : -1)),
+          reason_map: rm
+        };
       }),
       // pokaz logowania kodem SMS: kod to zawsze 123456
       smsLoginSend: (phone) => run(() => {
@@ -1021,7 +1047,9 @@
       registerCard: ({ name, phone, day, month, ref }) => rpc('register_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_ref: ref || null }),
       referralInfo: (code) => rpc('referral_info', { p_code: code }),
       getMyCard: (token) => rpc('get_my_card', { p_token: token }),
-      markAppOpen: (token) => rpc('mark_app_open', { p_token: token }),
+      // typ telefonu dochodzi po uruchomieniu pomiar-instalacji.sql; wcześniej baza zna tylko p_token
+      markAppOpen: (token, platform) => rpc('mark_app_open', { p_token: token, p_platform: platform || null }).catch(() => rpc('mark_app_open', { p_token: token })),
+      logInstallEvent: ({ device, platform, inApp, event, words, token }) => rpc('log_install_event', { p_device: device, p_platform: platform, p_in_app: !!inApp, p_event: event, p_words: words, p_token: token || null }),
       cardByLink: (code) => rpc('card_by_link', { p_code: code }),
       // logowanie do karty kodem SMS (funkcja kod-sms)
       smsLoginSend: (phone) => invoke('kod-sms', { action: 'send', phone }),
@@ -1062,6 +1090,8 @@
       referralsList: () => rpc('referrals_list', {}),
       listCards: (q) => rpc('list_cards', { p_query: q || '' }),
       appStatus: () => rpc('cards_app_status', {}),
+      installStats: () => rpc('install_stats', {}),
+      installReasonSet: (id, reason, note) => rpc('install_reason_set', { p_card: id, p_reason: reason || null, p_note: note || null }),
       createStudioCard: ({ name, phone, email, day, month, stamps }) => rpc('create_studio_card', { p_name: name, p_phone: phone || null, p_day: day || null, p_month: month || null, p_stamps: stamps || 0, p_email: email || null }),
       updateCard: (id, f) => rpc('update_card', { p_id: id, p_name: f.name, p_phone: f.phone || null, p_day: f.day || null, p_month: f.month || null, p_note: f.note || null, p_email: f.email || '' }),
       recordVisit: (id, mode, service, planId) => rpc('record_visit', { p_id: id, p_mode: mode, p_service: service || null, p_plan_id: planId || null }),

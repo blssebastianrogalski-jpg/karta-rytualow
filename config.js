@@ -21,6 +21,9 @@ window.APP_CONFIG = {
   // 'test' = tylko dla kart z listy niżej (zanim Google zatwierdzi kartę), true = dla wszystkich, false = ukryty.
   GOOGLE_WALLET: 'test',
   GOOGLE_WALLET_TEST_CARDS: [],
+  // Nowe słowa na ekranie instrukcji („strona zapisana jako ikona, niczego nie pobierasz ze sklepu”) od tego dnia.
+  // Pusty napis = stare słowa. Każdy wpis pomiaru zapisuje, którą wersję widziała klientka.
+  INSTALL_NEW_WORDS_FROM: '2026-11-25',
   // Skąd wychodzą automatyczne SMS-y (tylko opisy w panelu; o samej wysyłce decyduje sekret SMS_PROVIDER w Supabase):
   // 'telefon' = z karty SIM telefonu studia (do 1530 znaków, z polskimi literami), 'smsplanet' = bramka SMSPLANET (do 459 znaków).
   SMS_VIA: 'telefon',

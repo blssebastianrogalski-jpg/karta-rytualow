@@ -20,6 +20,22 @@
   const UA = navigator.userAgent;
   const IOS = /iphone|ipad|ipod/i.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
   const IN_APP = /FBAN|FBAV|FB_IAB|FBIOS|Instagram|Messenger|Line\/|; wv\)/i.test(UA);
+  // Pomiar instalacji: tylko typ telefonu (android / iphone / inny), bez modelu i innych danych.
+  const PLATFORM = IOS ? 'iphone' : /android/i.test(UA) ? 'android' : 'inny';
+  const NEW_WORDS = !!CFG.INSTALL_NEW_WORDS_FROM && Rules.dayPL(0) >= CFG.INSTALL_NEW_WORDS_FROM;
+  function deviceId() {
+    try {
+      let d = localStorage.getItem('tctd.dev');
+      if (!d) { d = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('tctd.dev', d); }
+      return d;
+    } catch (e) { return null; }
+  }
+  function logInstall(event) {
+    const dev = deviceId();
+    if (!dev || Api.demo || !Api.logInstallEvent) return;
+    Api.logInstallEvent({ device: dev, platform: PLATFORM, inApp: IN_APP, event, words: NEW_WORDS ? 'nowa' : 'stara', token: CardStore.get() }).catch(() => { /* pomiar nie może przeszkadzać karcie */ });
+  }
+  let installLogged = false;
 
   if (Api.demo) $('#demoBar').hidden = false;
   UI.registerSW();
@@ -98,7 +114,7 @@
       CardStore.clear();
       return renderJoin('Nie znalazłam tej karty. Załóż nową albo poproś w studiu o link do swojej karty.');
     }
-    if (STANDALONE) Api.markAppOpen(token).catch(() => { /* bez wpływu na kartę */ });
+    if (STANDALONE) Api.markAppOpen(token, PLATFORM).catch(() => { /* bez wpływu na kartę */ });
     // zgoda już jest, a subskrypcja mogła zniknąć (wylogowanie, ponowna instalacja), więc odnawiam ją po cichu
     if (pushSupported() && Notification.permission === 'granted') subscribePush(true).then(checkPush);
     else checkPush();
@@ -136,11 +152,11 @@
       how = step(1, 'Ten link otworzył się wewnątrz Messengera, Facebooka albo Instagrama. Stuknij <b>⋯</b> w rogu ekranu i wybierz <b>Otwórz w przeglądarce</b>' + (IOS ? ' (Safari)' : ' (Chrome)') + '.')
         + step(2, 'W przeglądarce zobaczysz tę stronę jeszcze raz, z instrukcją dodania karty do ekranu.');
     } else if (IOS) {
-      how = step(1, 'Stuknij <b>Udostępnij</b> ⬆︎ na dole ekranu (w Safari).')
-        + step(2, 'Przewiń w dół i wybierz <b>Do ekranu początkowego</b>, potem <b>Dodaj</b>.')
+      how = step(1, NEW_WORDS ? 'Stuknij <b>Udostępnij</b> ⬆︎ na dole ekranu Safari (kwadrat ze strzałką w górę).' : 'Stuknij <b>Udostępnij</b> ⬆︎ na dole ekranu (w Safari).')
+        + step(2, 'Przewiń w dół i wybierz <b>Do ekranu początkowego</b>, potem <b>Dodaj</b>.' + (NEW_WORDS ? ' To tylko skrót, tak jak zakładka w przeglądarce.' : ''))
         + step(3, 'Otwórz <b>Kartę rytuałów</b> z nowej ikony na ekranie telefonu.');
     } else if (installEvt) {
-      how = `<button class="btn btn--gold" id="installBtn">Zainstaluj aplikację</button>`
+      how = `<button class="btn btn--gold" id="installBtn">${NEW_WORDS ? 'Dodaj kartę do ekranu' : 'Zainstaluj aplikację'}</button>`
         + step(2, 'Potem otwórz <b>Kartę rytuałów</b> z ikony na ekranie telefonu.');
     } else {
       how = step(1, 'Stuknij menu <b>⋮</b> w rogu przeglądarki.')
@@ -152,7 +168,9 @@
         <img src="img/mark.png" alt="" style="width:120px;height:120px">
         <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
         <h1>${hasCard ? 'Twoja karta<br>czeka w aplikacji' : 'Dodaj kartę<br>do ekranu telefonu'}</h1>
-        <p class="lead">Karta rytuałów działa jako aplikacja na Twoim telefonie. Dzięki temu masz ją zawsze pod ręką i dostajesz przypomnienia o pieczątkach i urodzinach.</p>
+        <p class="lead">${NEW_WORDS
+          ? 'Karta to strona studia zapisana jako ikona na ekranie telefonu. Niczego nie pobierasz ze sklepu, prawie nie zajmuje miejsca i w każdej chwili możesz ją usunąć jak zwykłą ikonę.'
+          : 'Karta rytuałów działa jako aplikacja na Twoim telefonie.'} Dzięki temu masz ją zawsze pod ręką i dostajesz przypomnienia o pieczątkach i urodzinach.</p>
       </div>
       <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
       ${!hasCard && RefStore.get() ? inviteBox('Dodaj kartę do ekranu telefonu i załóż ją w aplikacji. Rabat zapisze się na Twojej karcie.') : ''}
@@ -160,12 +178,16 @@
         <span class="eyebrow eyebrow--gold">Jak dodać kartę</span>
         ${how}
       </div>
+      ${NEW_WORDS && !installed ? '<div class="hint">Pytania? Pokażę Ci to przy najbliższej wizycie.</div>' : ''}
       ${hasCard && IOS ? '<p class="small center">Jeśli po otwarciu z ikony nie zobaczysz swojej karty, wybierz <b>Zaloguj kodem SMS</b> i wpisz numer zapisany w studiu. Pieczątki zostaną na swoim miejscu.</p>' : ''}`;
     fillInvite();
+    if (!installLogged) { installLogged = true; logInstall('view'); }
     const ib = $('#installBtn');
     if (ib) ib.addEventListener('click', async () => {
+      logInstall('prompt');
       installEvt.prompt();
       const r = await installEvt.userChoice.catch(() => null);
+      if (r) logInstall(r.outcome === 'accepted' ? 'accepted' : 'dismissed');
       if (r && r.outcome === 'accepted') renderInstall(true);
     });
   }
@@ -250,7 +272,7 @@
         card = await Api.registerCard({ name, phone, day, month, ref });
         CardStore.set(card.token);
         RefStore.clear();
-        if (STANDALONE) Api.markAppOpen(card.token).catch(() => {});
+        if (STANDALONE) Api.markAppOpen(card.token, PLATFORM).catch(() => {});
         myConsent = await Api.setMyConsent(card.token, consent).catch(() => null);
         try { localStorage.setItem(CONSENT_KEY, '1'); } catch (e) { /* ignore */ }
         if (perm) perm.then((r) => r === 'granted' && subscribePush(true).then(() => { if (screen === 'card') render(); }));

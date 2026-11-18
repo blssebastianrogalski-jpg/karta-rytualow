@@ -126,6 +126,7 @@
         <div id="absences"><div class="spinner"></div></div>
         <button class="btn btn--line" id="absAddBtn">+ Dodaj dzień wolny</button>
       </section>
+      <div id="instStats"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
         <label class="eyebrow" for="search">Klientki</label>
         <input class="input" id="search" type="search" placeholder="Szukaj po imieniu, nazwisku lub telefonie" value="${esc(query)}" style="background:var(--surface)">
@@ -156,6 +157,7 @@
     $('#search').addEventListener('input', (e) => { query = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(loadList, 250); });
     Promise.all([loadRefs(), loadAbsences()]).then(loadPlan);
     loadList();
+    loadInstallStats();
     loadRequests();
     loadSmsAlert();
     loadRisks();
@@ -1103,6 +1105,93 @@
   }
   const hasApp = (c) => appMap ? !!appMap[c.id] : c.source !== 'studio';
 
+  // ---------- pomiar: karta w telefonach (Android / iPhone) i powody braku aplikacji ----------
+  const WHY = [
+    ['nie_wiedziala', 'Nie wiedziała jak'],
+    ['spoza_sklepu', 'Nie instaluje rzeczy spoza sklepu'],
+    ['nie_potrzebuje', 'Nie potrzebuje'],
+    ['inne', 'Inne']
+  ];
+  const whyLabel = (r) => (WHY.find((w) => w[0] === r) || [r, r])[1];
+  let instStats = null;    // null = baza jeszcze bez pomiaru (plik pomiar-instalacji.sql)
+  let instOpen = false;
+  async function fetchInstallStats() {
+    try { instStats = Api.installStats ? await Api.installStats() : null; } catch (e) { instStats = null; }
+    return instStats;
+  }
+  async function loadInstallStats() {
+    const box = $('#instStats');
+    if (!box) return;
+    const [st, apps] = await Promise.all([fetchInstallStats(), Api.appStatus().catch(() => ({}))]);
+    if (!st || !$('#instStats')) { box.innerHTML = ''; return; }
+    // porównanie: stare słowa instrukcji (przed CFG.INSTALL_NEW_WORDS_FROM) i nowe (od tego dnia)
+    const sw = CFG.INSTALL_NEW_WORDS_FROM;
+    const wSum = (w, pl) => st.funnel.filter((f) => f.words === w && f.platform === pl).reduce((a, f) => a + (f.viewed || 0), 0);
+    const newApps = (w, pl) => Object.values(apps || {}).filter((a) => a.platform === pl && a.first >= st.from && (w === 'nowa' ? Rules.dayPL(0) >= sw && a.first.slice(0, 10) >= sw : a.first.slice(0, 10) < sw)).length;
+    const cmp = sw ? `<span class="eyebrow">Stare i nowe słowa instrukcji (zmiana ${esc(UI.fmtShort(sw + 'T12:00:00'))})</span>
+        <div class="panel panel--tight">
+          <div class="list-row"><span class="small">Krok</span><span class="small">stare · nowe</span></div>
+          ${['android', 'iphone'].map((pl) => { const L = pl === 'android' ? 'Android' : 'iPhone'; return `<div class="list-row"><span>${L}: widziały instrukcję</span><span>${wSum('stara', pl)} · ${wSum('nowa', pl)}</span></div><div class="list-row"><span>${L}: nowe karty na ekranie</span><span>${newApps('stara', pl)} · ${newApps('nowa', pl)}</span></div>`; }).join('')}
+        </div>
+        <span class="small" style="color:var(--muted)">Przy kilkunastu wejściach różnica o 1 albo 2 osoby to jeszcze przypadek, nie wynik.</span>` : '';
+    const sum = (pl, k) => st.funnel.filter((f) => f.platform === pl).reduce((a, f) => a + (f[k] || 0), 0);
+    const c = st.cards, noApp = c.total - c.app;
+    const seen = st.no_app_seen || {};
+    const rs = st.reasons || {}, rTotal = Object.values(rs).reduce((a, n) => a + n, 0);
+    const worry = (rs.nie_wiedziala || 0) + (rs.spoza_sklepu || 0);
+    const row = (label, a, i) => `<div class="list-row"><span>${label}</span><span style="white-space:nowrap">${a} · ${i}</span></div>`;
+    box.innerHTML = `<section class="panel" style="gap:10px">
+      <button class="row linkbtn" id="instToggle" aria-expanded="${instOpen}" style="text-decoration:none;color:inherit;width:100%"><span class="eyebrow eyebrow--gold">Pomiar: karta w telefonach</span><span class="small">${instOpen ? 'zwiń' : 'pokaż'}</span></button>
+      <span class="small" style="margin:0">Aplikację ma ${c.app} z ${c.total} klientek: Android ${c.android}, iPhone ${c.iphone}${c.other ? ', inny ' + c.other : ''}${c.unknown ? ', jeszcze nieznany ' + c.unknown : ''}. Bez aplikacji: ${noApp}.</span>
+      ${instOpen ? `
+        ${c.unknown ? '<span class="small" style="color:var(--muted)">„Jeszcze nieznany” to karty dodane przed pomiarem. Typ telefonu dopisze się sam przy ich najbliższym otwarciu.</span>' : ''}
+        <span class="eyebrow">Od ${esc(UI.fmtShort(st.from))}</span>
+        <div class="panel panel--tight">
+          <div class="list-row"><span class="small">Krok</span><span class="small">Android · iPhone</span></div>
+          ${row('Widziały instrukcję w przeglądarce', sum('android', 'viewed'), sum('iphone', 'viewed'))}
+          ${row('z tego w Messengerze lub Instagramie', sum('android', 'in_app'), sum('iphone', 'in_app'))}
+          ${row('Stuknęły „Dodaj kartę do ekranu”', sum('android', 'prompt'), '–')}
+          ${row('Potwierdziły dodanie', sum('android', 'accepted'), '–')}
+          ${row('Zrezygnowały w okienku telefonu', sum('android', 'dismissed'), '–')}
+          ${row('Nowe karty na ekranie telefonu', c.new_android, c.new_iphone)}
+          ${row('Klientki bez aplikacji, które otworzyły link', seen.android || 0, seen.iphone || 0)}
+        </div>
+        ${cmp}
+        <span class="small" style="color:var(--muted)">Na iPhonie telefon nie mówi stronie, czy ktoś dodał ikonę, więc widać tylko początek i koniec drogi.</span>
+        <span class="eyebrow">Dlaczego bez aplikacji (${rTotal} ${UI.plural(rTotal, 'odpowiedź', 'odpowiedzi', 'odpowiedzi')})</span>
+        <div class="panel panel--tight">${WHY.map((w) => `<div class="list-row"><span>${w[1]}</span><span>${rs[w[0]] || 0}</span></div>`).join('')}</div>
+        ${rTotal ? `<span class="small">${worry} z ${rTotal} to „nie wiedziała jak” albo „spoza sklepu”. Próg z planu: co najmniej 1 na 4, głównie na Androidzie, wtedy Google Play ma sens.</span>` : '<span class="small">Odpowiedzi zaznaczasz w karcie klientki z oznaczeniem „bez aplikacji”, przy wizycie.</span>'}
+        ${(st.notes || []).filter((n) => n.note).slice(0, 5).map((n) => `<div class="hint"><span class="strong">${esc(n.name)}</span> · ${esc(whyLabel(n.reason))}: ${esc(n.note)}</div>`).join('')}` : ''}
+    </section>`;
+    $('#instToggle').addEventListener('click', () => { instOpen = !instOpen; loadInstallStats(); });
+  }
+
+  // pytanie przy karcie bez aplikacji: „Dlaczego nie masz karty w telefonie?”
+  function fillWhy(c) {
+    const box = sheetIn.querySelector('#whyBox');
+    if (!box || !instStats) return;
+    const cur = (instStats.reason_map || {})[c.id] || null;
+    box.hidden = false;
+    box.innerHTML = `<span class="eyebrow eyebrow--gold">Zapytaj przy wizycie</span>
+      <span class="strong">„Dlaczego nie masz karty w telefonie?”</span>
+      <div class="field"><label class="small" for="whyNote">Jej słowa (opcjonalnie, wpisz przed wyborem odpowiedzi)</label><input class="input" id="whyNote" maxlength="200" value="${esc((cur && cur.note) || '')}" placeholder="np. boi się wirusów, ma mało miejsca"></div>
+      <div style="display:flex;flex-direction:column;gap:8px">${WHY.map((w) => `<button class="btn ${cur && cur.reason === w[0] ? 'btn--gold' : 'btn--ghost'} btn--sm" style="width:100%" data-why="${w[0]}" aria-pressed="${!!(cur && cur.reason === w[0])}">${w[1]}</button>`).join('')}</div>
+      ${cur ? `<span class="small" style="color:var(--muted)">Zapisano ${esc(UI.fmtShort(cur.at))}. Stuknij inną odpowiedź, żeby zmienić.</span><button class="linkbtn" id="whyClear" style="align-self:flex-start">Usuń odpowiedź</button>` : ''}`;
+    const save = async (reason) => {
+      try {
+        const r = await Api.installReasonSet(c.id, reason, reason ? box.querySelector('#whyNote').value : null);
+        instStats.reason_map = instStats.reason_map || {};
+        if (r) instStats.reason_map[c.id] = r; else delete instStats.reason_map[c.id];
+        toast(r ? 'Zapisano odpowiedź: ' + whyLabel(reason) + '.' : 'Usunięto odpowiedź.');
+        fillWhy(c);
+        loadInstallStats();
+      } catch (e) { fail(e); }
+    };
+    box.querySelectorAll('[data-why]').forEach((b) => b.addEventListener('click', () => save(b.dataset.why)));
+    const cl = box.querySelector('#whyClear');
+    if (cl) cl.addEventListener('click', () => save(null));
+  }
+
   async function loadList() {
     const box = $('#list');
     if (!box) return;
@@ -1328,7 +1417,7 @@
       ${bar(c.name)}
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:-8px">
         <span class="tag">KARTA ${esc(c.code)}</span>
-        ${hasApp(c) ? '<span class="tag tag--solid">ma aplikację' + (appMap && appMap[c.id] ? ' · ostatnio ' + esc(UI.fmtShort(appMap[c.id].last)) : '') + '</span>' : '<span class="tag">bez aplikacji</span>'}
+        ${hasApp(c) ? '<span class="tag tag--solid">ma aplikację' + (appMap && appMap[c.id] ? (appMap[c.id].platform ? ' · ' + ({ android: 'Android', iphone: 'iPhone', inny: 'inny telefon' }[appMap[c.id].platform] || '') : '') + ' · ostatnio ' + esc(UI.fmtShort(appMap[c.id].last)) : '') + '</span>' : '<span class="tag">bez aplikacji</span>'}
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
       </div>
       ${currentPlan ? '<p class="small gold" style="margin:0">Wizyta z planu dnia. Po zapisaniu odhaczy się w planie.</p>' : ''}
@@ -1363,6 +1452,7 @@
         </div>
         <div id="linkQr" hidden></div>
       </section>
+      ${!hasApp(c) ? '<section class="panel" id="whyBox" style="gap:10px" hidden></section>' : ''}
       <section class="panel" style="gap:12px">
         <span class="eyebrow">Dane klientki</span>
         ${c.email ? `<div class="row"><span class="small">E-mail</span><span style="overflow-wrap:anywhere;text-align:right">${esc(c.email)}</span></div>` : ''}
@@ -1411,6 +1501,7 @@
       box.innerHTML = box.hidden ? '' : `<div class="qr-card">${UI.qrSvg(linkFor(c), { label: 'Kod do połączenia karty z aplikacją' })}<span class="small" style="color:#5C4A24;text-align:center">Klientka skanuje ten kod aparatem w swoim telefonie i dodaje kartę do ekranu telefonu.</span></div>`;
     });
     on('#printBtn', () => printCard(c));
+    if (!hasApp(c)) (instStats ? Promise.resolve() : fetchInstallStats()).then(() => { if (current === c) fillWhy(c); });
     loadIncidents(c);
     $('#smsBtn').setAttribute('href', smsHref(c));
     const smsOk = $('#smsOk');
