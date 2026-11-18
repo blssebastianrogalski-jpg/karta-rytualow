@@ -1460,6 +1460,7 @@
         <div class="row"><span class="small">Urodziny</span><span>${esc(UI.fmtBday(c.bday_day, c.bday_month) || '—')}${c.birthday_used_year === y ? ' <span class="tag">wykorzystane ' + y + '</span>' : ''}</span></div>
         <label class="check" id="smsOkRow" hidden><input type="checkbox" id="smsOk"> <span>Zgoda na SMS (życzenia urodzinowe przychodzą też SMS-em)</span></label>
         <label class="check" id="reviewRow" hidden><input type="checkbox" id="reviewDone"> <span>Wystawiła opinię w Google (nie dostaje już próśb o opinię)</span></label>
+        <label class="check small" id="reviewQuietRow" hidden style="margin-left:28px"><input type="checkbox" id="reviewQuiet"> <span>Bez powiadomienia o pieczątce za opinię</span></label>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
         ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : ''}
         ${c.ref_count ? `<div class="row"><span class="small">Poleciła</span><span>${c.ref_count} ${UI.plural(c.ref_count, 'osobę', 'osoby', 'osób')}${c.ref_rewarded < c.ref_count ? ' · ' + (c.ref_count - c.ref_rewarded) + ' przed wizytą' : ''}</span></div>` : ''}
@@ -1511,9 +1512,9 @@
       catch (e) { smsOk.checked = !smsOk.checked; fail(e); }
     });
     const revDone = $('#reviewDone');
-    Api.reviewDone(c.id).then((ok) => { revDone.checked = !!ok; $('#reviewRow').hidden = false; }).catch(() => {});
+    Api.reviewDone(c.id).then((ok) => { revDone.checked = !!ok; $('#reviewRow').hidden = false; $('#reviewQuietRow').hidden = !!ok; }).catch(() => {});
     revDone.addEventListener('change', async () => {
-      try { await Api.setReviewDone(c.id, revDone.checked); toast(revDone.checked ? 'Zapisano: opinia wystawiona.' : 'Prośby o opinię znów włączone.'); if (revDone.checked) { const fresh = await Api.getCard(c.id).catch(() => null); if (fresh && fresh.stamps !== c.stamps) { current = fresh; Api.notifyStamp(c.id, fresh.stamps).catch(() => {}); toast('Dopisano pieczątkę za opinię: ' + c.name + ' (' + fresh.stamps + '/10).'); renderCard(); } } }
+      try { await Api.setReviewDone(c.id, revDone.checked); toast(revDone.checked ? 'Zapisano: opinia wystawiona.' : 'Prośby o opinię znów włączone.'); if (revDone.checked) { const fresh = await Api.getCard(c.id).catch(() => null); if (fresh && fresh.stamps !== c.stamps) { current = fresh; const quiet = $('#reviewQuiet') && $('#reviewQuiet').checked; if (!quiet) Api.notifyStamp(c.id, fresh.stamps).catch(() => {}); toast('Dopisano pieczątkę za opinię: ' + c.name + ' (' + fresh.stamps + '/10)' + (quiet ? ', bez powiadomienia.' : '.')); renderCard(); } } }
       catch (e) { revDone.checked = !revDone.checked; fail(e); }
     });
   }
