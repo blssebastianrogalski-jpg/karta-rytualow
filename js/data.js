@@ -848,7 +848,7 @@
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
       resetToken: (id) => run(() => { guard(); return mutate(id, (c) => { c.token = rnd(36, '0123456789abcdef'); }); }),
       transferStamps: (id, n) => run(() => { guard(); return mutate(id, (c) => {
-        if (c.cards_completed || (c.visits || []).length) throw new Error('Pieczątki z papierowej karty można przenieść tylko przed pierwszą wizytą zapisaną w aplikacji.');
+        if (c.cards_completed || (c.visits || []).some((v) => v.kind !== 'booksy')) throw new Error('Pieczątki z papierowej karty można przenieść tylko przed pierwszą wizytą zapisaną w aplikacji.');
         c.stamps = Math.max(0, Math.min(9, n || 0));
       }); }),
       smsConsent: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return !!(c && c.sms_ok); }),
