@@ -8,6 +8,7 @@
  * Jednorazowa konfiguracja:
  *  1. Wklej klucz z panelu (Integracje → Booksy / Kalendarz Google) w miejsce KLUCZ poniżej.
  *  2. Wybierz u góry funkcję „ustaw” i kliknij „Uruchom”, potem zatwierdź uprawnienia.
+ *  3. (Wolne Okienko) Wklej klucz z panelu Wolnego Okienka → Integracje w miejsce WO_KLUCZ.
  */
 
 const KLUCZ = 'WKLEJ_TUTAJ_KLUCZ_Z_PANELU';
@@ -16,6 +17,12 @@ const SUPABASE_URL = 'https://pqvndgttgzaosjqjtxbg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Fs1pn9qjzVEHJjr9Qt8dEw_WicjPg3C';   // klucz publiczny aplikacji (ten sam co na stronie)
 const NADAWCA = 'no-reply@booksy.com';
 const TAG = 'tctd_booking';                // znacznik wydarzeń założonych przez skrypt
+
+// Wolne Okienko (rezerwacje online zamiast Booksy). Klucz: panel Wolnego Okienka → Integracje.
+// Dopóki zostaje tekst WKLEJ..., ta część jest wyłączona i skrypt działa jak dotąd.
+const WO_KLUCZ = 'WKLEJ_KLUCZ_WOLNEGO_OKIENKA';
+const WO_URL = 'https://jfirrtnbpshtijdqankt.supabase.co';
+const WO_KEY = 'sb_publishable_UHW9kVafsscGUjYZdHXM-g_YxKN0E3N';   // klucz publiczny Wolnego Okienka
 
 // ---------------------------------------------------------------------------
 //  Konfiguracja i uruchamianie
@@ -44,6 +51,7 @@ function synchronizuj() {
   if (!lock.tryLock(1000)) return;           // poprzedni przebieg jeszcze trwa
   const stats = { messages: 0, calendar: 0 };
   let preview = null;
+  let woBlad = null;
   try {
     const gmailOk = sprawdz(() => GmailApp.getInboxUnreadCount()) !== false;
     const cal = kalendarz();
@@ -72,8 +80,15 @@ function synchronizuj() {
       if (importMode === 'apply') stats.import_applied = true;
     }
 
+    // 1b) Wolne Okienko → aplikacja (te same funkcje co maile Booksy; rezerwacja ma numer wo-...)
+    if (!cfg.import_state || (cfg.import_state !== 'preview_requested' && cfg.import_state !== 'apply_requested')) {
+      // błąd Wolnego Okienka nie zatrzymuje Kalendarza; zgłaszamy go na końcu przebiegu
+      try { stats.messages += pobierzZWolnegoOkienka(); } catch (err) { woBlad = err; }
+    }
+
     // 2) aplikacja → Kalendarz Google
     if (cal) stats.calendar = zapiszWKalendarzu(cal, cfg);
+    if (woBlad) throw woBlad;
 
     rpc('booksy_script_finish', { p_key: KLUCZ, p_ok: true, p_stats: stats, p_import_preview: preview });
   } catch (err) {
@@ -113,6 +128,49 @@ function zapamietaj(id) {
   if (list.indexOf(id) !== -1) return;
   list.push(id);
   p.setProperty('done', list.slice(-400).join(','));
+}
+
+// ---------------------------------------------------------------------------
+//  Wolne Okienko
+// ---------------------------------------------------------------------------
+
+/** Pobiera nowe zdarzenia z Wolnego Okienka i zapisuje je jak maile Booksy. Zwraca liczbę zapisanych. */
+function pobierzZWolnegoOkienka() {
+  if (!WO_KLUCZ || WO_KLUCZ.indexOf('WKLEJ') === 0) return 0;
+  const props = PropertiesService.getScriptProperties();
+  let after = Number(props.getProperty('wo_cursor') || 0);
+  let applied = 0;
+  for (let round = 0; round < 5; round++) {
+    const feed = rpcWO('integration_feed', { p_key: WO_KLUCZ, p_after: after });
+    const events = feed.events || [];
+    if (!events.length) break;
+    const out = rpc('booksy_script_ingest', { p_key: KLUCZ, p_events: events, p_dry_run: false });
+    // błąd jednego zdarzenia: nie przesuwamy kursora, następny przebieg spróbuje ponownie
+    if (out.results.some((r) => r.result === 'error')) break;
+    applied += out.results.filter((r) => r.result === 'applied').length;
+    after = Number(feed.last_id);
+    props.setProperty('wo_cursor', String(after));
+    if (events.length < 200) break;
+  }
+  return applied;
+}
+
+function rpcWO(name, body) {
+  const res = UrlFetchApp.fetch(WO_URL + '/rest/v1/rpc/' + name, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { apikey: WO_KEY, Authorization: 'Bearer ' + WO_KEY },
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true
+  });
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+  if (code >= 300) {
+    let msg = text;
+    try { msg = JSON.parse(text).message || text; } catch (e) { /* tekst */ }
+    throw new Error('Wolne Okienko: ' + msg);
+  }
+  return text ? JSON.parse(text) : {};
 }
 
 // ---------------------------------------------------------------------------
