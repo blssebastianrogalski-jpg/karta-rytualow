@@ -9,6 +9,8 @@
  *  1. Wklej klucz z panelu (Integracje → Booksy / Kalendarz Google) w miejsce KLUCZ poniżej.
  *  2. Wybierz u góry funkcję „ustaw” i kliknij „Uruchom”, potem zatwierdź uprawnienia.
  *  3. (Wolne Okienko) Wklej klucz z panelu Wolnego Okienka → Integracje w miejsce WO_KLUCZ.
+ *     Wtedy skrypt działa w obie strony: wizyty z Wolnego Okienka trafiają tutaj, a maile Booksy
+ *     (nowa rezerwacja, zmiana, odwołanie) także do Wolnego Okienka.
  */
 
 const KLUCZ = 'WKLEJ_TUTAJ_KLUCZ_Z_PANELU';
@@ -84,6 +86,8 @@ function synchronizuj() {
     if (!cfg.import_state || (cfg.import_state !== 'preview_requested' && cfg.import_state !== 'apply_requested')) {
       // błąd Wolnego Okienka nie zatrzymuje Kalendarza; zgłaszamy go na końcu przebiegu
       try { stats.messages += pobierzZWolnegoOkienka(); } catch (err) { woBlad = err; }
+      // 1c) maile Booksy → Wolne Okienko (żeby rezerwacje z Booksy blokowały termin także tam)
+      try { stats.wo_booksy = wyslijDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
     }
 
     // 2) aplikacja → Kalendarz Google
@@ -152,6 +156,36 @@ function pobierzZWolnegoOkienka() {
     props.setProperty('wo_cursor', String(after));
     if (events.length < 200) break;
   }
+  return applied;
+}
+
+// Maile Booksy wysyłane do Wolnego Okienka od tej daty (wcześniejsze wizyty przeniesiono importem 20.11.2026).
+const WO_BOOKSY_OD = new Date('2026-11-19T00:00:00Z');
+
+/** Wysyła nowe maile Booksy (nowa / zmiana / odwołanie) do Wolnego Okienka. Zwraca liczbę zapisanych. */
+function wyslijDoWolnegoOkienka() {
+  if (!WO_KLUCZ || WO_KLUCZ.indexOf('WKLEJ') === 0) return 0;
+  const props = PropertiesService.getScriptProperties();
+  const done = (props.getProperty('wo_booksy_done') || '').split(',').filter(Boolean);
+  const events = [];
+  GmailApp.search('from:' + NADAWCA + ' newer_than:7d', 0, 200).forEach((t) => t.getMessages().forEach((m) => {
+    if (m.getDate() < WO_BOOKSY_OD || done.indexOf(m.getId()) !== -1) return;
+    if (m.getFrom().toLowerCase().indexOf(NADAWCA) === -1) return;
+    const e = rozpoznajMail(m.getSubject(), m.getPlainBody(), m.getBody(), m.getDate());
+    e.gmail_id = m.getId();
+    e.received_at = m.getDate().toISOString();
+    events.push(e);
+  }));
+  if (!events.length) return 0;
+  events.sort((a, b) => (a.received_at < b.received_at ? -1 : 1));
+  let applied = 0;
+  for (let i = 0; i < events.length; i += 40) {
+    const out = rpcWO('integration_booksy_ingest', { p_key: WO_KLUCZ, p_events: events.slice(i, i + 40) });
+    // błąd jednego maila: zostaje niezapamiętany, następny przebieg spróbuje ponownie
+    (out.results || []).filter((r) => r.gmail_id && r.result !== 'error').forEach((r) => done.push(r.gmail_id));
+    applied += (out.results || []).filter((r) => r.result === 'applied').length;
+  }
+  props.setProperty('wo_booksy_done', done.slice(-400).join(','));
   return applied;
 }
 
