@@ -428,6 +428,24 @@
         }).sort((a, b) => b.created_at.localeCompare(a.created_at));
       }),
       getCard: (id) => run(() => { guard(); const c = load().cards.find((x) => x.id === id); return c ? view(c) : null; }),
+      // jak attach_referral w polecenie-do-istniejacej-karty.sql
+      setReferral: (cardId, refId) => run(() => {
+        guard();
+        const db = load();
+        const c = db.cards.find((x) => x.id === cardId), r = db.cards.find((x) => x.id === refId);
+        if (!c) throw new Error('Nie znaleziono karty.');
+        if (!r || r.id === c.id) throw new Error('Wybierz inną klientkę jako polecającą.');
+        if (c.referred_by) throw new Error('Ta karta ma już zapisane polecenie.');
+        const n = (c.visits || []).filter((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind)).length;
+        if ((c.visits || []).some((v) => v.kind === 'booksy')) throw new Error('To stała klientka (była w studiu przed programem poleceń). Polecenie jest dla nowych klientek.');
+        if (n > 1) throw new Error('Ta klientka ma już kilka wizyt w aplikacji. Polecenie liczy się tylko przed pierwszą wizytą albo zaraz po niej.');
+        c.referred_by = r.id;
+        let result = 'welcome';
+        if (n === 0) c.ref_welcome = true;
+        else { c.ref_welcome = false; c.ref_rewarded_at = new Date().toISOString(); r.bonus_stamps = (r.bonus_stamps || 0) + 1; bonus(r); result = 'rewarded'; }
+        save(db);
+        return { result, referrer_id: r.id, referrer_name: r.name, referrer_stamps: r.stamps, referrer_bonus: r.bonus_stamps || 0 };
+      }),
       listCards: (q) => run(() => {
         guard();
         q = (q || '').trim().toLowerCase();
@@ -1088,6 +1106,8 @@
       findCard: (code) => rpc('find_card', { p_code: code }),
       getCard: (id) => rpc('get_card', { p_id: id }),
       referralsList: () => rpc('referrals_list', {}),
+      setReferral: (cardId, refId) => rpc('staff_set_referral', { p_card: cardId, p_ref: refId }),
+      claimReferral: (token, code) => rpc('claim_referral', { p_token: token, p_code: code }),
       listCards: (q) => rpc('list_cards', { p_query: q || '' }),
       appStatus: () => rpc('cards_app_status', {}),
       installStats: () => rpc('install_stats', {}),

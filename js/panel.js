@@ -1462,7 +1462,7 @@
         <label class="check" id="reviewRow" hidden><input type="checkbox" id="reviewDone"> <span>Wystawiła opinię w Google (nie dostaje już próśb o opinię)</span></label>
         <label class="check small" id="reviewQuietRow" hidden style="margin-left:28px"><input type="checkbox" id="reviewQuiet"> <span>Bez powiadomienia o pieczątce za opinię</span></label>
         <div class="row"><span class="small">Karta od</span><span>${esc(UI.fmtDate(c.created_at))}</span></div>
-        ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : ''}
+        ${c.referred_by_name ? `<div class="row"><span class="small">Z polecenia</span><span>${esc(c.referred_by_name)}</span></div>` : Api.setReferral ? `<button class="linkbtn" id="refSetBtn" style="align-self:flex-start">Przyszła z polecenia? Przypisz polecającą</button><div id="refSetBox" hidden style="display:flex;flex-direction:column;gap:8px"><input class="input" id="refSetQ" placeholder="Imię lub nazwisko polecającej" autocomplete="off"><div id="refSetList"></div></div>` : ''}
         ${c.ref_count ? `<div class="row"><span class="small">Poleciła</span><span>${c.ref_count} ${UI.plural(c.ref_count, 'osobę', 'osoby', 'osób')}${c.ref_rewarded < c.ref_count ? ' · ' + (c.ref_count - c.ref_rewarded) + ' przed wizytą' : ''}</span></div>` : ''}
         ${c.bonus_stamps ? `<div class="hint">Czeka ${c.bonus_stamps} ${UI.plural(c.bonus_stamps, 'pieczątka', 'pieczątki', 'pieczątek')} za polecenie. Dopisze się sama po najbliższej wizycie (nie zajmuje kratki z rabatem).</div>` : ''}
         ${c.cards_completed ? `<div class="row"><span class="small">Ukończone karty</span><span>${c.cards_completed}</span></div>` : ''}
@@ -1491,6 +1491,8 @@
       openPlanAdd(c, o === 2 ? Rules.dayPL(2) : Rules.dayPL(o), svc(), true);
     }));
     on('#editBtn', () => openEdit());
+    on('#refSetBtn', () => { $('#refSetBtn').hidden = true; $('#refSetBox').hidden = false; $('#refSetQ').focus(); });
+    bindRefSet(c);
     fillPkg(c);
     on('#delBtn', async () => {
       if (!(await UI.ask('Usunąć kartę: ' + c.name + '? Tego nie da się cofnąć.', 'Usuń'))) return;
@@ -1615,6 +1617,48 @@
   }
 
   // pierwsza wizyta koleżanki z polecenia: baza dodała pieczątkę polecającej; pokaż komu i wyślij jej powiadomienie
+  // polecenie dopisane ręcznie, gdy karta powstała bez linku polecającego (np. z rezerwacji Booksy)
+  function bindRefSet(c) {
+    const q = $('#refSetQ');
+    if (!q) return;
+    let timer;
+    q.addEventListener('input', () => {
+      clearTimeout(timer);
+      const text = q.value.trim();
+      timer = setTimeout(async () => {
+        const box = $('#refSetList');
+        if (!box) return;
+        if (text.length < 3) { box.innerHTML = ''; return; }
+        let list = [];
+        try { list = (await Api.listCards(text)).filter((x) => x.id !== c.id).slice(0, 5); } catch (ex) { /* bez podpowiedzi */ }
+        if (!box.isConnected || q.value.trim() !== text) return;
+        box.innerHTML = list.length ? '<div class="panel panel--tight" style="background:var(--bg)">' + list.map((x) => `
+          <div class="client"><button class="client__main" data-refpick="${esc(x.id)}">
+            <span class="avatar">${esc(UI.initials(x.name))}</span>
+            <span><span class="client__name">${esc(x.name)}</span><span class="client__meta">${x.stamps} / 10${x.phone ? ' · ' + esc(x.phone) : ''}</span></span>
+          </button></div>`).join('') + '</div>' : '<p class="small" style="margin:0">Nie znalazłam takiej karty.</p>';
+        box.querySelectorAll('[data-refpick]').forEach((b) => b.addEventListener('click', async () => {
+          const r = list.find((x) => x.id === b.dataset.refpick);
+          const visited = (c.visits || []).some((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind));
+          const msg = c.name + ' przyszła z polecenia: ' + r.name + '?' + (visited
+            ? ' Pierwsza wizyta już była, więc ' + r.name.split(/\s+/)[0] + ' dostanie pieczątkę za polecenie od razu.'
+            : ' Pierwszy pojedynczy rytuał dostanie −10%, a ' + r.name.split(/\s+/)[0] + ' pieczątkę po tej wizycie.');
+          if (!(await UI.ask(msg, 'Tak, przypisz'))) return;
+          try {
+            const res = await Api.setReferral(c.id, r.id);
+            current = (await Api.getCard(c.id).catch(() => null)) || current;
+            loadRefs().catch(() => {});
+            renderCard();
+            if (res && res.result === 'rewarded') {
+              if (res.referrer_bonus > 0) await UI.ask('Polecenie zapisane. ' + res.referrer_name + ' ma teraz w kolejce rytuał z rabatem, więc pieczątka za polecenie dopisze się sama po jej najbliższej wizycie.', 'OK', true);
+              else { Api.notifyStamp(res.referrer_id, res.referrer_stamps).catch(() => {}); await UI.ask('Polecenie zapisane. Pieczątka za polecenie jest już na karcie: ' + res.referrer_name + ' (' + res.referrer_stamps + '/10), dostała powiadomienie.', 'OK', true); }
+            } else toast('Polecenie zapisane: ' + c.name + ' ma −10% na pierwszy rytuał.', 'reward');
+          } catch (e) { fail(e); }
+        }));
+      }, 250);
+    });
+  }
+
   async function refReward(c) {
     await loadRefs();
     const r = refs.find((x) => x.id === c.id);

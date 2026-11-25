@@ -115,6 +115,13 @@
       return renderJoin('Nie znalazłam tej karty. Załóż nową albo poproś w studiu o link do swojej karty.');
     }
     if (STANDALONE) Api.markAppOpen(token, PLATFORM).catch(() => { /* bez wpływu na kartę */ });
+    // link polecający otwarty przed wejściem na kartę, która już istniała (np. założona z rezerwacji Booksy)
+    const pendingRef = RefStore.get();
+    if (pendingRef && !card.referred_by_name && Api.claimReferral) {
+      const res = await Api.claimReferral(token, pendingRef).catch(() => undefined);
+      if (res !== undefined) RefStore.clear();
+      if (res === 'welcome') { try { card = (await Api.getMyCard(token)) || card; } catch (e) { /* zostaje bez odświeżenia */ } toast('Polecenie zapisane: Twój pierwszy rytuał −10%.', 'reward'); }
+    }
     // zgoda już jest, a subskrypcja mogła zniknąć (wylogowanie, ponowna instalacja), więc odnawiam ją po cichu
     if (pushSupported() && Notification.permission === 'granted') subscribePush(true).then(checkPush);
     else checkPush();
