@@ -11,6 +11,8 @@
  *  3. (Wolne Okienko) Wklej klucz z panelu Wolnego Okienka → Integracje w miejsce WO_KLUCZ.
  *     Wtedy skrypt działa w obie strony: wizyty z Wolnego Okienka trafiają tutaj, a maile Booksy
  *     (nowa rezerwacja, zmiana, odwołanie) także do Wolnego Okienka.
+ *     Wizyty zatwierdzone w karcie (prośby o termin, wolne okienka) też trafiają do Wolnego Okienka
+ *     (wymaga funkcji z supabase/wizyty-z-karty-do-wolnego-okienka.sql w bazie karty).
  */
 
 const KLUCZ = 'WKLEJ_TUTAJ_KLUCZ_Z_PANELU';
@@ -88,6 +90,8 @@ function synchronizuj() {
       try { stats.messages += pobierzZWolnegoOkienka(); } catch (err) { woBlad = err; }
       // 1c) maile Booksy → Wolne Okienko (żeby rezerwacje z Booksy blokowały termin także tam)
       try { stats.wo_booksy = wyslijDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
+      // 1d) wizyty zatwierdzone w karcie → Wolne Okienko (a stamtąd automat wpisuje je do Booksy)
+      try { stats.wo_karta = wyslijKarteDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
     }
 
     // 2) aplikacja → Kalendarz Google
@@ -187,6 +191,27 @@ function wyslijDoWolnegoOkienka() {
   }
   props.setProperty('wo_booksy_done', done.slice(-400).join(','));
   return applied;
+}
+
+/**
+ * Wysyła do Wolnego Okienka pełną listę wizyt z karty (od dziś do 120 dni), bez tych z Booksy
+ * i z Wolnego Okienka. Wolne Okienko samo dopisuje nowe, przekłada zmienione i odwołuje usunięte.
+ * Zwraca liczbę zmian.
+ */
+function wyslijKarteDoWolnegoOkienka() {
+  if (!WO_KLUCZ || WO_KLUCZ.indexOf('WKLEJ') === 0) return 0;
+  let snap;
+  try {
+    snap = rpc('wo_script_karta_visits', { p_key: KLUCZ });
+  } catch (err) {
+    // funkcja jeszcze nie dodana w bazie karty: ta część czeka, reszta działa
+    if (String(err && err.message || err).indexOf('wo_script_karta_visits') !== -1) return 0;
+    throw err;
+  }
+  if (!snap || !Array.isArray(snap.visits)) return 0;
+  const out = rpcWO('integration_karta_sync', { p_key: WO_KLUCZ, p_snapshot: snap });
+  const zmiany = (out.results || []).filter((r) => ['created', 'moved', 'cancelled', 'linked'].indexOf(r.result) !== -1).length;
+  return zmiany + (out.cancelled || 0);
 }
 
 function rpcWO(name, body) {
