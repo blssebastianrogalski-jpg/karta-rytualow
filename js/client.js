@@ -6,6 +6,7 @@
   const nav = $('#nav');
   let card = null;
   let requests = [];       // prośby o termin (dla klientek bez Booksy)
+  let reqDay = null;       // dzień podpowiedziany w formularzu (np. dzień urodzin)
   let retryOf = null;      // „inny dzień” po propozycji wolnych godzin
   let moveOf = null;       // przełożenie wizyty umówionej przez aplikację (id z planu dnia)
   let gaps = [];           // wolne terminy po odwołaniu albo z grafiku (kto pierwszy, ten lepszy)
@@ -440,7 +441,7 @@
           ${u.own ? (u.moving
             ? '<span class="small gold">Prośba o przełożenie wysłana. Ten termin zostaje, dopóki nie potwierdzę nowego.</span>'
             : `<div class="btn-row" style="margin-top:6px"><button class="btn btn--line btn--sm" data-visit-move="${u.id}">Przełóż</button><button class="btn btn--ghost btn--sm" data-visit-cancel="${u.id}">Odwołaj</button></div>`) : ''}</div>`).join('')}
-        ${viaBooksy ? `<a class="btn btn--line btn--sm" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener" style="margin-top:6px">${viaBooksy < upcoming.length ? 'Zmień lub odwołaj wizytę z Booksy' : 'Zmień lub odwołaj w Booksy'}</a>` : ''}
+        ${viaBooksy ? `<span class="small" style="color:var(--text-2);margin-top:6px">${viaBooksy < upcoming.length ? 'Chcesz zmienić lub odwołać wizytę umówioną poza aplikacją?' : 'Chcesz zmienić lub odwołać wizytę?'} Zadzwoń lub napisz: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></span>` : ''}
       </section>` : '';
     const reqBox = requestsBox();
     const lastVisit = visits.find((v) => ['stamp', 'package_buy', 'package_visit', 'birthday'].includes(v.kind));
@@ -482,7 +483,6 @@
       ${next}
       ${reqBox}
       <button class="btn btn--gold btn--two" id="reqBtn"><span>Umów wizytę w aplikacji</span><small>Wybierz dzień i rytuał, a ja potwierdzę termin.</small></button>
-      <a class="btn btn--black" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">Umów wizytę w Booksy</a>
       ${review}
       ${wallet}
       ${tiles}
@@ -516,12 +516,12 @@
     main.querySelectorAll('button[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
     const pb2 = $('#pushBtn2');
     if (pb2) pb2.addEventListener('click', enablePush);
-    $('#reqBtn').addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); });
+    $('#reqBtn').addEventListener('click', () => { retryOf = null; moveOf = null; reqDay = null; go('req'); });
     main.querySelectorAll('[data-visit-cancel]').forEach((b) => b.addEventListener('click', () => cancelVisit(+b.dataset.visitCancel)));
-    main.querySelectorAll('[data-visit-move]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = +b.dataset.visitMove; go('req'); }));
+    main.querySelectorAll('[data-visit-move]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = +b.dataset.visitMove; reqDay = null; go('req'); }));
     main.querySelectorAll('[data-req-cancel]').forEach((b) => b.addEventListener('click', () => cancelRequest(+b.dataset.reqCancel)));
-    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); }));
-    main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; moveOf = null; go('req'); }));
+    main.querySelectorAll('[data-req-again]').forEach((b) => b.addEventListener('click', () => { retryOf = null; moveOf = null; reqDay = null; go('req'); }));
+    main.querySelectorAll('[data-req-retry]').forEach((b) => b.addEventListener('click', () => { retryOf = +b.dataset.reqRetry; moveOf = null; reqDay = null; go('req'); }));
     main.querySelectorAll('[data-req-pick]').forEach((b) => b.addEventListener('click', () => pickSlot(+b.dataset.reqPick, b.dataset.at)));
     main.querySelectorAll('[data-gap-at]').forEach((b) => b.addEventListener('click', () => {
       gapPick = { id: +b.dataset.gapId, at: b.dataset.gapAt, max: +b.dataset.gapMax };
@@ -664,12 +664,12 @@
       <p class="lead" style="margin-top:-6px">${moving ? 'Teraz: ' + esc(visitWhen(moving)) + '. Wybierz nowy dzień i porę. Obecny termin zostaje, dopóki nie potwierdzę nowego.' : retryOf ? 'Wybierz inny dzień albo porę. Sprawdzę ją i odezwę się.' : 'Napisz, kiedy chcesz przyjść. Potwierdzę termin SMS-em, a wizyta pojawi się na Twojej karcie.'}</p>
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
-        <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${Rules.dayPL(1)}">
+        <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${reqDay && reqDay >= Rules.dayPL(0) && reqDay <= Rules.dayPL(60) ? reqDay : Rules.dayPL(1)}">
           <div id="rClosed" role="status" hidden style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div></div>
-        <div class="field"><span class="label" id="rPartL">Pora dnia</span>
+        <div class="field"><label for="rTime">Konkretna godzina (jeśli chcesz)</label><input class="input" id="rTime" type="time" min="08:00" max="21:00" step="900"></div>
+        <div class="field"><span class="label" id="rPartL">Albo pora dnia</span>
           <div class="chips" role="radiogroup" aria-labelledby="rPartL" id="rParts" style="flex-wrap:wrap">${parts.map((k) => `<button type="button" class="pick" role="radio" data-part="${k}" aria-checked="${k === 'any'}" style="min-height:44px;padding:8px 12px;flex:1 1 45%">${esc(PART[k].replace(/^./, (ch) => ch.toUpperCase()))}</button>`).join('')}</div>
         </div>
-        <div class="field"><label for="rTime">Konkretna godzina (jeśli chcesz)</label><input class="input" id="rTime" type="time" min="08:00" max="21:00" step="900"></div>
         <div class="field"><label for="rPhone">Telefon do kontaktu</label><input class="input" id="rPhone" type="tel" autocomplete="tel" placeholder="np. 600 000 000" value="${esc(card.phone || '')}"></div>
         <div class="field"><label for="rMsg">Wiadomość (opcjonalnie)</label><textarea class="input" id="rMsg" rows="3" maxlength="500" placeholder="np. mogę też w sobotę rano"></textarea></div>
         <p class="error" id="rErr" role="alert" hidden></p>
@@ -677,11 +677,19 @@
       </form>
       <p class="small center">To jeszcze nie rezerwacja. Termin jest Twój, gdy go potwierdzę. Szybciej: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a></p>`;
     let part = 'any';
-    $('#reqBack').addEventListener('click', () => { retryOf = null; moveOf = null; go('card'); });
+    const presetDay = !!reqDay && $('#rDay').value === reqDay;
+    $('#reqBack').addEventListener('click', () => { retryOf = null; moveOf = null; reqDay = null; go('card'); });
     $('#rParts').addEventListener('click', (e) => {
       const b = e.target.closest('[data-part]'); if (!b) return;
       part = b.dataset.part;
+      $('#rTime').value = ''; // pora dnia zamiast konkretnej godziny
       $('#rParts').querySelectorAll('[data-part]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    });
+    // konkretna godzina zastępuje porę dnia: zaznaczenie pory znika, żeby było jasne, co wysyłam
+    $('#rTime').addEventListener('input', () => {
+      if (!$('#rTime').value) return;
+      part = 'any';
+      $('#rParts').querySelectorAll('[data-part]').forEach((x) => x.setAttribute('aria-checked', 'false'));
     });
     // dni wolne studia: takiego dnia nie da się wybrać, klientka widzi najbliższe dni otwarte
     let closed = null;
@@ -707,7 +715,8 @@
     Api.closedDays(CardStore.get()).then((c) => {
       if (!c || !$('#rDay')) return;
       closed = c;
-      if (isClosed($('#rDay').value)) { const n = openDays(Rules.dayPL(0), 1)[0]; if (n) $('#rDay').value = n; }
+      // dzień podany z góry (np. urodziny) zostaje: klientka widzi, że studio jest wtedy nieczynne, i najbliższe wolne dni
+      if (!presetDay && isClosed($('#rDay').value)) { const n = openDays(Rules.dayPL(0), 1)[0]; if (n) $('#rDay').value = n; }
       checkDay();
     }).catch(() => { /* baza jeszcze bez dni wolnych: sprawdzi studio */ });
     $('#reqForm').addEventListener('submit', async (e) => {
@@ -720,7 +729,7 @@
       const btn = $('#rBtn'); btn.disabled = true; btn.textContent = 'Wysyłam…';
       try {
         const r = await Api.requestCreate(CardStore.get(), f);
-        retryOf = null; moveOf = null;
+        retryOf = null; moveOf = null; reqDay = null;
         await loadRequests();
         try { card = (await Api.getMyCard(CardStore.get())) || card; } catch (e2) { /* zostaje stara karta */ }
         if (r.status === 'suggested') toast('Ten termin jest zajęty. Wybierz jedną z wolnych godzin.');
@@ -837,7 +846,7 @@
   }
 
   // przycisk „Umów kolejny rytuał” na zakładkach Rytuały i Pakiet: umawianie w aplikacji
-  function bookBtn() { const b = main.querySelector('[data-book]'); if (b) b.addEventListener('click', () => { retryOf = null; moveOf = null; go('req'); }); }
+  function bookBtn() { const b = main.querySelector('[data-book]'); if (b) b.addEventListener('click', () => { retryOf = null; moveOf = null; reqDay = null; go('req'); }); }
 
   // ---------- moje rytuały i pakiet ----------
   async function loadVisits() {
@@ -969,8 +978,13 @@
         <div class="row"><span class="small" style="font-size:14px">Status</span><span class="strong gold">${esc(status)}</span></div>
       </section>
       ${body}
-      <a class="btn btn--line" href="${esc(CFG.BOOKSY_URL)}" target="_blank" rel="noopener">${has ? 'Zarezerwuj na ' + esc(date) : 'Umów wizytę w Booksy'}</a>
+      <button class="btn btn--line" id="bdayBook">${has ? 'Umów wizytę na ' + esc(date) : 'Umów wizytę w aplikacji'}</button>
       <p class="small">Rabat urodzinowy nie łączy się z innymi promocjami ani z pakietami.</p>`;
+    // umawianie przez aplikację: formularz od razu z dniem urodzin (jeśli mieści się w 60 dniach)
+    $('#bdayBook').addEventListener('click', () => {
+      reqDay = has ? (card.bday_today ? Rules.dayPL(0) : Rules.dayPL(Rules.daysToBday(card.bday_day, card.bday_month).days)) : null;
+      retryOf = null; moveOf = null; go('req');
+    });
   }
 
   // ---------- promocje ----------
