@@ -14,6 +14,7 @@
   let tab = 'home';        // 'home' = klientki i plan dnia, 'sale' = sprzedaż vouchera, 'promo' = promocje
   let planDay = 0;         // 0 = plan na dziś, 1 = plan na jutro, 2 = kolejne dni
   let planMoreDay = null;  // dzień, na który „+” dodaje klientkę w widoku „Kolejne dni”
+  const UPCOMING_AHEAD = 62; // nadchodzące wizyty na karcie klientki (tyle maksymalnie zwraca plan_range)
   const PLAN_AHEAD = 30;   // ile dni naprzód można układać plan
   const DAY_NAME = ['dziś', 'jutro'];
   const dateLabel = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -1415,7 +1416,7 @@
     const services = CFG.SERVICES.map((s) => `<option${s === lastService ? ' selected' : ''}>${esc(s)}</option>`).join('');
     openSheet(`
       ${bar(c.name)}
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:-8px">
+      <div id="cardTags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:-8px">
         <span class="tag">KARTA ${esc(c.code)}</span>
         ${hasApp(c) ? '<span class="tag tag--solid">ma aplikację' + (appMap && appMap[c.id] ? (appMap[c.id].platform ? ' · ' + ({ android: 'Android', iphone: 'iPhone', inny: 'inny telefon' }[appMap[c.id].platform] || '') : '') + ' · ostatnio ' + esc(UI.fmtShort(appMap[c.id].last)) : '') + '</span>' : '<span class="tag">bez aplikacji</span>'}
         ${c.bday_today ? '<span class="tag tag--solid">urodziny dziś</span>' : ''}
@@ -1470,8 +1471,12 @@
         <button class="btn btn--ghost btn--sm" id="editBtn">Edytuj dane</button>
       </section>
       <section style="display:flex;flex-direction:column;gap:10px" id="incBox" hidden></section>
+      <section style="display:flex;flex-direction:column;gap:10px" id="upBox">
+        <span class="eyebrow eyebrow--gold">Nadchodzące wizyty</span>
+        <div class="panel panel--tight"><p class="small" style="padding:12px 0;margin:0">Sprawdzam plan…</p></div>
+      </section>
       <section style="display:flex;flex-direction:column;gap:10px">
-        <span class="eyebrow">Historia wizyt</span>
+        <span class="eyebrow">Historia wizyt (odbyte)</span>
         <div class="panel panel--tight">${(c.visits || []).length ? c.visits.map((v) => `<div class="list-row"><span>${esc(MODE_LABEL[v.kind])}${v.service ? ' · ' + esc(v.service) : ''}${v.discount ? ' <span class="tag tag--solid">−' + v.discount + '%</span>' : ''}${v.kind === 'package_visit' || v.kind === 'birthday' || v.kind === 'booksy' ? ' <span class="tag">bez pieczątki</span>' : ''}</span><span>${UI.fmtShort(v.created_at)}</span></div>`).join('') : '<p class="small" style="padding:12px 0;margin:0">Brak wizyt.</p>'}</div>
       </section>
       <button class="btn btn--danger btn--sm" id="delBtn" style="align-self:center">Usuń kartę</button>`);
@@ -1494,6 +1499,7 @@
     on('#refSetBtn', () => { $('#refSetBtn').hidden = true; $('#refSetBox').hidden = false; $('#refSetQ').focus(); });
     bindRefSet(c);
     fillPkg(c);
+    fillUpcoming(c);
     on('#delBtn', async () => {
       if (!(await UI.ask('Usunąć kartę: ' + c.name + '? Tego nie da się cofnąć.', 'Usuń'))) return;
       try { await Api.deleteCard(c.id); toast('Usunięto kartę.'); closeSheet(); } catch (e) { fail(e); }
@@ -1519,6 +1525,30 @@
       try { await Api.setReviewDone(c.id, revDone.checked); toast(revDone.checked ? 'Zapisano: opinia wystawiona.' : 'Prośby o opinię znów włączone.'); if (revDone.checked) { const fresh = await Api.getCard(c.id).catch(() => null); if (fresh && fresh.stamps !== c.stamps) { current = fresh; const quiet = $('#reviewQuiet') && $('#reviewQuiet').checked; if (!quiet) Api.notifyStamp(c.id, fresh.stamps).catch(() => {}); toast('Dopisano pieczątkę za opinię: ' + c.name + ' (' + fresh.stamps + '/10)' + (quiet ? ', bez powiadomienia.' : '.')); renderCard(); } } }
       catch (e) { revDone.checked = !revDone.checked; fail(e); }
     });
+  }
+
+  // Nadchodzące wizyty klientki: z planu dnia (wpisane w panelu, potwierdzone prośby i Booksy) na najbliższe 2 miesiące.
+  async function fillUpcoming(c) {
+    const box = sheetIn.querySelector('#upBox');
+    if (!box) return;
+    const today = Rules.dayPL(0), now = Date.now();
+    let list;
+    try {
+      const plan = await Api.planRange(today, Rules.dayPL(UPCOMING_AHEAD));
+      list = (plan || []).filter((p) => String(p.card_id) === String(c.id) && p.status === 'planned' &&
+        (p.day > today || !p.start_at || new Date(p.start_at).getTime() > now - 2 * 3600e3));
+    } catch (e) { list = null; }
+    if (!current || current.id !== c.id || !sheetIn.contains(box)) return;
+    const hhmm = (iso) => new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+    const when = (p) => (p.day === today ? 'dziś' : p.day === Rules.dayPL(1) ? 'jutro' : new Date(p.day + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'short' }));
+    const inner = list === null ? '<p class="small" style="padding:12px 0;margin:0">Nie udało się sprawdzić planu. Odśwież panel.</p>'
+      : !list.length ? '<p class="small" style="padding:12px 0;margin:0">Brak umówionych wizyt w najbliższych 2 miesiącach.</p>'
+      : list.map((p) => `<div class="list-row"><span>${esc(p.service || 'Rytuał')}${p.booking_id ? ' <span class="tag">Booksy</span>' : ''}</span><span class="strong gold" style="white-space:nowrap">${esc(when(p))}${p.start_at ? ' · ' + esc(hhmm(p.start_at)) : ''}</span></div>`).join('');
+    box.querySelector('.panel').innerHTML = inner;
+    if (list && list.length) {
+      const tags = sheetIn.querySelector('#cardTags');
+      if (tags && !tags.querySelector('[data-up-tag]')) tags.insertAdjacentHTML('beforeend', `<span class="tag tag--solid" data-up-tag>umówiona: ${esc(when(list[0]))}${list[0].start_at ? ' ' + esc(hhmm(list[0].start_at)) : ''}</span>`);
+    }
   }
 
   // Pakiet klientki: ile rytuałów wykorzystała i kiedy (to samo widzi w aplikacji w zakładce „Pakiet”).
