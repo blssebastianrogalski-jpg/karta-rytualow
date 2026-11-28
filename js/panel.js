@@ -1029,13 +1029,21 @@
     let plan;
     const day = planDay;
     let deps = [];
+    let breaks = null; // przerwy po wizytach (skracanie-przerwy.sql); null = baza jeszcze bez tego pliku
     try {
       const [from, to] = day < 2 ? [Rules.dayPL(day), Rules.dayPL(day)] : [Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)];
-      [plan, deps] = await Promise.all([day < 2 ? Api.planList(from) : Api.planRange(from, to),
-        Api.depositsPlan ? Api.depositsPlan(from, to).catch(() => []) : []]);
+      [plan, deps, breaks] = await Promise.all([day < 2 ? Api.planList(from) : Api.planRange(from, to),
+        Api.depositsPlan ? Api.depositsPlan(from, to).catch(() => []) : [],
+        Api.planBreaks ? Api.planBreaks(from, to).catch(() => null) : null]);
     } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
     const depOf = (p) => (deps || []).find((d) => String(d.plan_id) === String(p.id));
+    // przerwa po wizycie z godziną: { min, short } albo null (bez godziny, zapisana albo baza bez skracanie-przerwy.sql)
+    const breakOf = (p) => {
+      if (!breaks || !p.start_at || p.status !== 'planned') return null;
+      const own = breaks.plan ? breaks.plan[String(p.id)] : undefined;
+      return own === undefined || own === null ? { min: breaks.default, short: false } : { min: own, short: true };
+    };
     if (!plan.length && day < 2 && absenceNote(Rules.dayPL(day))) { box.innerHTML = offBanner(absenceNote(Rules.dayPL(day))); return; }
     if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">' + (day < 2 ? 'Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.' : 'Na kolejne ' + PLAN_AHEAD + ' dni nie ma jeszcze żadnych wizyt.') + '</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
@@ -1049,7 +1057,10 @@
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : done || p.booking_id ? '' : 'bez godziny · ') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
-      const timeLink = done ? '' : `<button class="linkbtn" data-plan-edit="${esc(p.id)}" style="flex-basis:100%;text-align:left;min-height:34px;padding:0 6px 4px 58px;font-size:13.5px">${p.booking_id ? 'Usuń z planu' : p.start_at ? 'Przesuń lub usuń wizytę' : 'Ustaw godzinę, przesuń lub usuń'}</button>`;
+      const editBtn = `<button class="linkbtn" data-plan-edit="${esc(p.id)}" style="text-align:left;min-height:34px;padding:0 6px 4px 0;font-size:13.5px">${p.booking_id ? 'Usuń z planu' : p.start_at ? 'Przesuń lub usuń wizytę' : 'Ustaw godzinę, przesuń lub usuń'}</button>`;
+      const brk = breakOf(p);
+      const breakBtn = brk === null ? '' : `<button class="linkbtn" data-plan-break="${esc(p.id)}" style="text-align:left;min-height:34px;padding:0 6px 4px 0;font-size:13.5px">${brk.short ? 'Przerwa po: ' + brk.min + ' min (skrócona)' : 'Skróć przerwę po (' + brk.min + ' min)'}</button>`;
+      const timeLink = done ? '' : `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;column-gap:16px;padding-left:58px">${editBtn}${breakBtn}</div>`;
       return `<div class="client" style="flex-wrap:wrap;row-gap:0">
         <button class="client__main" ${target} style="${done ? 'opacity:.6' : ''}">
           <span class="avatar" style="${done ? 'background:var(--gold);color:var(--on-gold);border-color:var(--gold)' : ''}">${done ? '✓' : esc(UI.initials(p.name))}</span>
@@ -1086,6 +1097,10 @@
       if (p && p.booking_id) openPlanCancel(p); else openPlanEdit(p);
     }));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
+    box.querySelectorAll('[data-plan-break]').forEach((b) => b.addEventListener('click', () => {
+      const p = pick(b.dataset.planBreak);
+      if (p) openPlanBreak(p, breakOf(p), breaks.default);
+    }));
     box.querySelectorAll('[data-plan-del]').forEach((b) => b.addEventListener('click', () => openPlanCancel(pick(b.dataset.planDel))));
     box.querySelectorAll('[data-dep-rc]').forEach((b) => b.addEventListener('click', () => {
       const p = pick(b.dataset.depRc), d = depOf(p);
@@ -1331,6 +1346,36 @@
         closeSheet();
         toast('Wizyta: ' + whenName(d.value) + (t.value ? ', ' + t.value : ', bez godziny') + '.' + (sms ? (r && r.sms ? ' Klientka dostanie SMS.' : ' Brak numeru telefonu, SMS nie poszedł.') : ''));
       } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    });
+  }
+
+  // przerwa po jednej wizycie: krótsza niż domyślna albo bez przerwy (tylko studio, klientka tego nie widzi)
+  function openPlanBreak(p, brk, def) {
+    if (!p || !brk) return;
+    const cur = new Date(p.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    const opts = [];
+    for (let m = 0; m < def; m += 5) opts.push(m);
+    if (brk.short && opts.indexOf(brk.min) < 0 && brk.min !== def) { opts.push(brk.min); opts.sort((a, b) => a - b); }
+    openSheet(`${bar('Przerwa po wizycie')}
+      <p class="lead" style="margin-top:-8px">${esc(p.name)}</p>
+      <p class="small" style="margin:-10px 0 4px">${esc(whenName(p.day))}, ${esc(cur)}${p.service ? ' · ' + esc(p.service) : ''}</p>
+      <form class="panel" id="pbForm" novalidate>
+        <div class="field"><label for="pbMin">Przerwa po tej wizycie</label><select class="input" id="pbMin">
+          <option value=""${brk.short ? '' : ' selected'}>Zwykła (${esc(def)} min)</option>
+          ${opts.map((m) => `<option value="${m}"${brk.short && brk.min === m ? ' selected' : ''}>${m === 0 ? 'Bez przerwy' : m + ' min'}</option>`).join('')}
+        </select></div>
+        <p class="small" style="margin:0">Dotyczy tylko tej wizyty. Krótsza przerwa zwalnia wcześniejszą godzinę po niej: aplikacja zaproponuje ją klientkom w prośbach o termin i pokaże w „Wolne godziny”. Klientki tego ustawienia nie widzą.</p>
+        <p class="error" id="pbErr" role="alert" hidden></p>
+        <button class="btn btn--gold" type="submit" id="pbSave">Zapisz przerwę</button>
+      </form>`);
+    $('#pbForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const v = $('#pbMin').value, btn = $('#pbSave'); btn.disabled = true;
+      try {
+        await Api.planSetBreak(p.id, v === '' ? null : +v);
+        closeSheet(); loadPlan();
+        toast(v === '' ? 'Przerwa po wizycie: zwykła (' + def + ' min).' : v === '0' ? 'Bez przerwy po tej wizycie.' : 'Przerwa po wizycie: ' + v + ' min.');
+      } catch (ex) { const err = $('#pbErr'); err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
     });
   }
 

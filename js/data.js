@@ -134,7 +134,7 @@
       const end = new Date(+start + min * 6e4);
       if (start < Slots.at(day, h[0]) || end > Slots.at(day, h[1])) return 'Poza godzinami pracy (' + h[0] + '–' + h[1] + ')';
       const hit = (db.plan || []).filter((p) => p.day === day && p.status === 'planned' && p.start_at).filter((p) => {
-        const s = new Date(p.start_at), e = new Date(+s + (Slots.minutes(p.service) + Slots.brk) * 6e4);
+        const s = new Date(p.start_at), e = new Date(+s + (Slots.minutes(p.service) + (p.break_min === undefined || p.break_min === null ? Slots.brk : p.break_min)) * 6e4);
         return s < new Date(+end + Slots.brk * 6e4) && start < e;
       });
       if (!hit.length) return 'ok';
@@ -726,6 +726,20 @@
         save(db);
       }),
       // jak deposits_plan w zadatek-wplacony.sql
+      planBreaks: (from, to) => run(() => {
+        guard();
+        const plan = {};
+        (load().plan || []).forEach((p) => { if (p.day >= from && p.day <= to && p.break_min !== undefined && p.break_min !== null) plan[String(p.id)] = p.break_min; });
+        return { default: Slots.brk, plan };
+      }),
+      planSetBreak: (planId, min) => run(() => {
+        guard();
+        const db = load();
+        const p = (db.plan || []).find((x) => String(x.id) === String(planId) && x.status === 'planned');
+        if (!p) throw new Error('Nie ma tej wizyty w planie.');
+        p.break_min = min === null || min === undefined ? null : min;
+        save(db);
+      }),
       depositsPlan: (from, to) => run(() => {
         guard(); const db = load(); const out = [];
         (db.risks || []).filter((a) => a.status === 'paid' && !a.deposit_settled_at).forEach((a) => {
@@ -1172,6 +1186,9 @@
       riskAlertDepositUndo: (id) => rpc('risk_alert_deposit_undo', { p_id: id }),
       riskAlertDepositSettle: (id) => rpc('risk_alert_deposit_settle', { p_id: id }),
       depositsPlan: async (from, to) => { try { return await rpc('deposits_plan', { p_from: from, p_to: to }); } catch (e) { if (noFn(e)) return []; throw e; } },
+      // przerwa po wizycie (skracanie-przerwy.sql); bez tego pliku przycisk się nie pokazuje
+      planBreaks: async (from, to) => { try { return await rpc('plan_breaks', { p_from: from, p_to: to }); } catch (e) { if (noFn(e)) return null; throw e; } },
+      planSetBreak: (planId, min) => rpc('plan_set_break', { p_plan_id: planId, p_min: min === null || min === undefined ? null : min }),
       incidentsCard: async (cardId) => { try { return await rpc('incidents_card', { p_card: cardId }); } catch (e) { if (noFn(e)) return null; throw e; } },
       incidentAdd: (cardId, day, kind, note) => rpc('incident_add', { p_card: cardId, p_day: day, p_kind: kind, p_note: note || null }),
       incidentDelete: (id) => rpc('incident_delete', { p_id: id }),
