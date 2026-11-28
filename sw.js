@@ -1,5 +1,5 @@
 // Pamięć podręczna: aplikacja otwiera się szybko i działa przy słabym zasięgu.
-const VERSION = 'v53';
+const VERSION = 'v54';
 const ASSETS = [
   './', 'index.html', 'panel.html', 'config.js', 'css/style.css',
   'js/data.js', 'js/ui.js', 'js/client.js', 'js/panel.js', 'js/integracje.js',
@@ -39,15 +39,25 @@ async function logPush(d) {
     await c.put(LOG_KEY, new Response(JSON.stringify(list.slice(0, 30)), { headers: { 'Content-Type': 'application/json' } }));
   } catch (err) { /* dziennik nie może zablokować powiadomienia */ }
 }
+// Liczba na ikonie aplikacji (iPhone z aplikacją na ekranie początkowym, komputer): tyle,
+// ile powiadomień czeka na pasku. Android pokazuje kropkę sam. Panel zeruje ją po otwarciu.
+async function updateBadge() {
+  try {
+    if (!('setAppBadge' in self.navigator)) return;
+    const list = await self.registration.getNotifications();
+    if (list.length) await self.navigator.setAppBadge(list.length); else await self.navigator.clearAppBadge();
+  } catch (err) { /* znaczek to dodatek */ }
+}
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
   e.waitUntil(Promise.all([
-    self.registration.showNotification(d.title || 'Karta rytuałów', { body: d.body || '', icon: 'img/icon-192.png', data: { url: d.url || './' } }),
+    self.registration.showNotification(d.title || 'Karta rytuałów', { body: d.body || '', icon: 'img/icon-192.png', data: { url: d.url || './' } })
+      .then(updateBadge),
     logPush(d)
   ]));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  e.waitUntil(clients.openWindow(e.notification.data.url));
+  e.waitUntil(Promise.all([clients.openWindow(e.notification.data.url), updateBadge()]));
 });
