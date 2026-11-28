@@ -108,6 +108,8 @@ function synchronizuj() {
       try { stats.wo_booksy = wyslijDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
       // 1d) wizyty zatwierdzone w karcie → Wolne Okienko (a stamtąd automat wpisuje je do Booksy)
       try { stats.wo_karta = wyslijKarteDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
+      // 1e) skrócone przerwy po wizytach: Karta ↔ Wolne Okienko (wygrywa nowsza zmiana)
+      try { stats.wo_przerwy = przerwyMiedzyAplikacjami(); } catch (err) { woBlad = woBlad || err; }
     }
 
     // 2) aplikacja → Kalendarz Google
@@ -229,6 +231,26 @@ function wyslijKarteDoWolnegoOkienka() {
   const out = rpcWO('integration_karta_sync', { p_key: WO_KLUCZ, p_snapshot: snap });
   const zmiany = (out.results || []).filter((r) => ['created', 'moved', 'cancelled', 'linked'].indexOf(r.result) !== -1).length;
   return zmiany + (out.cancelled || 0);
+}
+
+/**
+ * Przerwy po wizytach w obie strony. Każda strona podaje przerwy zmienione dla przyszłych wizyt
+ * (godzina początku, minuty albo null = zwykła, czas zmiany); druga strona przyjmuje tylko nowsze.
+ * Zwraca liczbę przeniesionych zmian. Bez funkcji w bazie (most-przerwy.sql) ta część czeka.
+ */
+function przerwyMiedzyAplikacjami() {
+  if (!WO_KLUCZ || WO_KLUCZ.indexOf('WKLEJ') === 0) return 0;
+  let karta, wo;
+  try {
+    karta = rpc('wo_script_breaks', { p_key: KLUCZ });
+  } catch (err) {
+    if (String(err && err.message || err).indexOf('wo_script_breaks') !== -1) return 0;
+    throw err;
+  }
+  wo = rpcWO('integration_breaks_pull', { p_key: WO_KLUCZ });
+  const doWo = rpcWO('integration_breaks_push', { p_key: WO_KLUCZ, p_items: (karta && karta.items) || [] });
+  const doKarty = rpc('wo_script_breaks_apply', { p_key: KLUCZ, p_items: (wo && wo.items) || [] });
+  return ((doWo && doWo.applied) || 0) + ((doKarty && doKarty.applied) || 0);
 }
 
 function rpcWO(name, body) {
