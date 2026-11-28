@@ -121,6 +121,8 @@
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
+    // aplikacja otwarta: liczba na ikonie znika (powiadomienia zostają na pasku)
+    try { if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {}); } catch (e) { /* ignore */ }
   }
 
   window.UI = { esc, $, plural, fmtBday, fmtShort, fmtDate, initials, stampGrid, progressText, nextVisitInfo, qrSvg, toast, dayOptions, monthOptions, validBday, greeting, ask, registerSW, MONTHS };
