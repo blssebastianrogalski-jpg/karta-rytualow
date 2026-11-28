@@ -224,7 +224,7 @@
         <img src="img/mark.png" alt="" style="width:120px;height:120px">
         <span class="eyebrow eyebrow--gold">Karta rytuałów</span>
         <h1>Każdy rytuał<br>coś Ci daje</h1>
-        <p class="lead">Zbieraj pieczątki za wizyty w studiu. Przy 5. rytuale masz −15%, przy 10. aż −30%. A w dniu urodzin czeka na Ciebie −20%.</p>
+        <p class="lead">Zbieraj pieczątki za wizyty w studiu. Przy 5. rytuale masz −15%, przy 10. aż −30%. A w dniu urodzin czeka na Ciebie −20% na wizytę umówioną w aplikacji.</p>
       </div>
       <div class="chips"><span><strong>5. rytuał</strong> −15%</span><span><strong>10. rytuał</strong> −30%</span><span><strong>Urodziny</strong> −20%</span></div>
       ${msg ? '<p class="error" role="alert">' + esc(msg) + '</p>' : ''}
@@ -471,7 +471,7 @@
       ${pushBox}
       ${consentBox}
       ${welcome}
-      ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span></button>' : ''}
+      ${card.bday_today && card.birthday_used_year !== Rules.todayPL().y ? '<button class="panel panel--gold bday-today" data-go="bday" style="text-align:left;color:inherit;cursor:pointer"><span class="eyebrow eyebrow--gold">Wszystkiego najpiękniejszego!</span><span class="strong" style="font-size:17px">Dziś masz −20% na dowolny rytuał →</span><span class="small" style="color:var(--text-2)">Umów wizytę w aplikacji. Przez Booksy rabat nie działa.</span></button>' : ''}
       <section class="panel" aria-label="Karta rytuałów">
         <div class="row"><span class="eyebrow eyebrow--gold">Karta rytuałów</span><span class="strong" style="font-size:15px">${card.stamps} / 10</span></div>
         ${UI.stampGrid(card.stamps, { animate })}
@@ -665,7 +665,8 @@
       <form class="panel" id="reqForm" novalidate>
         <div class="field"><label for="rService">Rytuał</label><select class="input" id="rService">${services.map((x, i) => `<option value="${i ? esc(x) : ''}"${x === svcNow ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
         <div class="field"><label for="rDay">Dzień</label><input class="input" id="rDay" type="date" min="${Rules.dayPL(0)}" max="${Rules.dayPL(60)}" value="${reqDay && reqDay >= Rules.dayPL(0) && reqDay <= Rules.dayPL(60) ? reqDay : Rules.dayPL(1)}">
-          <div id="rClosed" role="status" hidden style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div></div>
+          <div id="rClosed" role="status" hidden style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>
+          <div id="rBday" hidden style="margin-top:4px">${bdayAppNote('To dzień Twoich urodzin: −20%', 'Wizyta umówiona tą prośbą w aplikacji jest objęta rabatem urodzinowym. Rezerwacja przez Booksy nie obejmuje rabatu.')}</div></div>
         <div class="field"><label for="rTime">Konkretna godzina (jeśli chcesz)</label><input class="input" id="rTime" type="time" min="08:00" max="21:00" step="900"></div>
         <div class="field"><span class="label" id="rPartL">Albo pora dnia</span>
           <div class="chips" role="radiogroup" aria-labelledby="rPartL" id="rParts" style="flex-wrap:wrap">${parts.map((k) => `<button type="button" class="pick" role="radio" data-part="${k}" aria-checked="${k === 'any'}" style="min-height:44px;padding:8px 12px;flex:1 1 45%">${esc(PART[k].replace(/^./, (ch) => ch.toUpperCase()))}</button>`).join('')}</div>
@@ -700,9 +701,12 @@
       return out;
     };
     const shortDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'long' });
+    // dzień urodzin (rabat jeszcze niewykorzystany w tym roku): informacja, że rabat działa tylko przy umówieniu w aplikacji
+    const bdayFree = card.birthday_used_year !== Rules.todayPL().y ? bdayDayStr() : null;
     const checkDay = () => {
       const box = $('#rClosed'); if (!box) return;
       const d = $('#rDay').value, off = d && isClosed(d);
+      $('#rBday').hidden = !(bdayFree && d === bdayFree && !off);
       $('#rBtn').disabled = !!off;
       box.hidden = !off;
       if (!off) { box.innerHTML = ''; return; }
@@ -945,6 +949,14 @@
   }
 
   // ---------- urodziny ----------
+  // rabat urodzinowy obejmuje tylko wizyty umówione w aplikacji (decyzja studia: rezerwacja przez Booksy bez rabatu)
+  const BDAY_APP_ONLY = 'Rabat urodzinowy obejmuje tylko wizytę umówioną w tej aplikacji. Rezerwacja przez Booksy nie obejmuje rabatu.';
+  const bdayAppNote = (title = 'Umów się w aplikacji', text = BDAY_APP_ONLY) => `<div class="hint hint--reward" style="display:flex;flex-direction:column;gap:4px"><span class="strong">${title}</span><span class="small" style="color:var(--text)">${text}</span></div>`;
+  // dzień urodzin w formacie RRRR-MM-DD (najbliższy, dziś też się liczy) albo null
+  const bdayDayStr = () => {
+    if (!card.bday_day || !card.bday_month) return null;
+    return card.bday_today ? Rules.dayPL(0) : Rules.dayPL(Rules.daysToBday(card.bday_day, card.bday_month).days);
+  };
   function renderBday() {
     const y = Rules.todayPL().y;
     const has = card.bday_day && card.bday_month;
@@ -955,14 +967,15 @@
       body = '<p class="lead">Nie mam jeszcze Twojej daty urodzin. Podaj ją przy najbliższej wizycie, a dopiszę ją do karty.</p>';
     } else if (card.bday_today && card.birthday_used_year !== y) {
       status = 'Dziś!';
-      body = '<p class="lead">Wszystkiego najpiękniejszego! Dziś masz −20% na dowolny rytuał. Zarezerwuj wizytę na dziś i pokaż swój kod przy płatności.</p>';
+      body = '<p class="lead">Wszystkiego najpiękniejszego! Dziś masz −20% na dowolny rytuał. Umów wizytę na dziś w aplikacji i pokaż swój kod przy płatności.</p>' + bdayAppNote();
     } else if (card.birthday_used_year === y) {
       status = 'Wykorzystany w tym roku';
       body = '<p class="lead">Mam nadzieję, że urodzinowy rytuał był wyjątkowy. Kolejny prezent czeka za rok.</p>';
     } else {
       const d = Rules.daysToBday(card.bday_day, card.bday_month);
       status = 'Za ' + d.days + ' ' + UI.plural(d.days, 'dzień', 'dni', 'dni');
-      body = '<p class="lead">Zarezerwuj wizytę dokładnie na dzień urodzin. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>'
+      body = '<p class="lead">Umów wizytę dokładnie na dzień urodzin przyciskiem poniżej. Przy wizycie pokaż swój kod, a rabat zostanie naliczony.</p>'
+        + bdayAppNote()
         + `<div class="hint">Nie ma wolnego terminu w dniu urodzin? Daj mi od razu znać: <a href="tel:${esc(CFG.PHONE.replace(/\s/g, ''))}">${esc(CFG.PHONE)}</a>. Ustalę z Tobą inną datę, żeby prezent Ci nie przepadł.</div>`;
     }
     main.innerHTML = `
@@ -975,6 +988,7 @@
       <section class="panel" style="gap:12px">
         <div class="row"><span class="small" style="font-size:14px">Twoje urodziny</span><span class="strong">${has ? esc(date) : '—'}</span></div>
         <div class="row"><span class="small" style="font-size:14px">Rabat ważny</span><span class="strong">${has ? 'tylko ' + esc(date) : 'w dniu urodzin'}</span></div>
+        <div class="row"><span class="small" style="font-size:14px">Jak skorzystać</span><span class="strong">wizyta umówiona w aplikacji</span></div>
         <div class="row"><span class="small" style="font-size:14px">Status</span><span class="strong gold">${esc(status)}</span></div>
       </section>
       ${body}
@@ -982,7 +996,7 @@
       <p class="small">Rabat urodzinowy nie łączy się z innymi promocjami ani z pakietami.</p>`;
     // umawianie przez aplikację: formularz od razu z dniem urodzin (jeśli mieści się w 60 dniach)
     $('#bdayBook').addEventListener('click', () => {
-      reqDay = has ? (card.bday_today ? Rules.dayPL(0) : Rules.dayPL(Rules.daysToBday(card.bday_day, card.bday_month).days)) : null;
+      reqDay = bdayDayStr();
       retryOf = null; moveOf = null; go('req');
     });
   }

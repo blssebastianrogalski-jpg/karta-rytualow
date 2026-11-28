@@ -105,7 +105,7 @@ function walletClass() {
     countryCode: "PL",
     reviewStatus: "UNDER_REVIEW",
     homepageUri: { uri: APP_URL, description: "Otwórz kartę" },
-    textModulesData: [{ id: "zasady", header: "Nagrody", body: "Każdy rytuał to jedna pieczątka. 5. rytuał −15%, 10. rytuał −30%. W dniu urodzin −20% na dowolny rytuał." }],
+    textModulesData: [{ id: "zasady", header: "Nagrody", body: "Każdy rytuał to jedna pieczątka. 5. rytuał −15%, 10. rytuał −30%. W dniu urodzin −20% na dowolny rytuał umówiony w aplikacji (nie przez Booksy)." }],
     linksModuleData: { uris: [
       { id: "booksy", uri: BOOKSY_URL, description: "Umów wizytę w Booksy" },
       { id: "karta", uri: APP_URL, description: "Otwórz kartę w aplikacji" },
