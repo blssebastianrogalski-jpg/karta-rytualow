@@ -120,7 +120,7 @@
           <input class="input" id="planDate" type="date" min="${Rules.dayPL(2)}" max="${Rules.dayPL(PLAN_AHEAD)}" value="${planMoreDay || Rules.dayPL(2)}" style="background:var(--surface)">
         </div>
         <div id="plan"><div class="spinner"></div></div>
-        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej, i od razu ustawisz godzinę. „Przesuń lub usuń wizytę” pod nazwiskiem zmienia dzień, godzinę albo rytuał, a „×” usuwa wizytę z planu. Wizyty z Booksy przesuwasz w Booksy.</p>
+        <p class="small" style="margin:0">Wizyty z Booksy dopisują się same (z godziną), gdy integracja jest podłączona. Ręcznie dodasz klientkę przyciskiem „+” przy nazwisku, do dnia wybranego wyżej, i od razu ustawisz godzinę. „Przesuń lub usuń wizytę” pod nazwiskiem zmienia dzień, godzinę albo rytuał, a „×” usuwa wizytę z planu. Zmiany wizyt z Booksy i z Wolnego Okienka same trafiają do Wolnego Okienka i do Booksy.</p>
       </section>
       <div id="gaps"></div>
       <section style="display:flex;flex-direction:column;gap:10px">
@@ -1048,16 +1048,23 @@
     let deps = [];
     let breaks = null; // przerwy po wizytach (skracanie-przerwy.sql); null = baza jeszcze bez tego pliku
     let sources = null; // wizyty z Wolnego Okienka (pelny-most.sql); null = baza jeszcze bez tego pliku
+    let woDone = null; // odbyte w Wolnym Okienku bez pieczątki (pelny-most-2.sql)
     try {
       const [from, to] = day < 2 ? [Rules.dayPL(day), Rules.dayPL(day)] : [Rules.dayPL(2), Rules.dayPL(PLAN_AHEAD)];
       [plan, deps, breaks, sources] = await Promise.all([day < 2 ? Api.planList(from) : Api.planRange(from, to),
         Api.depositsPlan ? Api.depositsPlan(from, to).catch(() => []) : [],
         Api.planBreaks ? Api.planBreaks(from, to).catch(() => null) : null,
         Api.planSources ? Api.planSources(from, to).catch(() => null) : null]);
+      woDone = Api.planWoDone ? await Api.planWoDone().catch(() => null) : null;
     } catch (e) { box.innerHTML = '<p class="error">' + esc(e.message) + '</p>'; return; }
     if (day !== planDay) return; // w międzyczasie wybrano inny dzień
     // wizyta umówiona w Wolnym Okienku: można ją zmienić tutaj, zmiana sama wróci do Wolnego Okienka
-    plan.forEach((p) => { p.wo = !!(p.booking_id && sources && sources[String(p.id)] === 'wo'); });
+    // wizyta z Booksy (pelny-most-2.sql): też do zmiany tutaj, zmiana idzie przez Wolne Okienko do Booksy
+    plan.forEach((p) => {
+      const src = p.booking_id && sources ? sources[String(p.id)] : null;
+      p.wo = src === 'wo';
+      p.editable = !p.booking_id || src === 'wo' || src === 'booksy';
+    });
     const depOf = (p) => (deps || []).find((d) => String(d.plan_id) === String(p.id));
     // przerwa po wizycie z godziną: { min, short } albo null (bez godziny, zapisana albo baza bez skracanie-przerwy.sql)
     const breakOf = (p) => {
@@ -1065,6 +1072,14 @@
       const own = breaks.plan ? breaks.plan[String(p.id)] : undefined;
       return own === undefined || own === null ? { min: breaks.default, short: false } : { min: own, short: true };
     };
+    // odbyte w Wolnym Okienku: przypomnienie o pieczątce (rodzaj pieczątki wybiera studio)
+    const woDoneBox = (woDone || []).length ? `<div class="hint hint--reward" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <span class="strong">Odbyta w Wolnym Okienku: wbij pieczątkę</span>
+        ${woDone.map((w) => `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+          <span class="small" style="color:var(--text);flex:1 1 160px">${esc(w.name)} · ${esc(w.today ? 'dziś' : dateLabel(w.day))}${w.start_at ? ', ' + esc(new Date(w.start_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })) : ''}${w.service ? ' · ' + esc(w.service) : ''}</span>
+          ${w.card_id ? `<button class="btn btn--gold btn--sm" data-wodone-open="${esc(w.card_id)}" data-wodone-plan="${w.today ? esc(w.plan_id) : ''}">Wbij pieczątkę</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-wodone-hide="${esc(w.plan_id)}">Ukryj</button></div>`).join('')}
+      </div>` : '';
     if (!plan.length && day < 2 && absenceNote(Rules.dayPL(day))) { box.innerHTML = offBanner(absenceNote(Rules.dayPL(day))); return; }
     if (!plan.length) { box.innerHTML = '<div class="panel" style="padding:16px"><span class="small">' + (day < 2 ? 'Na ' + DAY_NAME[day] + ' nikogo jeszcze nie dodano.' : 'Na kolejne ' + PLAN_AHEAD + ' dni nie ma jeszcze żadnych wizyt.') + '</span></div>'; return; }
     const todo = plan.filter((p) => p.status === 'planned').length;
@@ -1078,7 +1093,7 @@
       const meta = (p.start_at ? hhmm(p.start_at) + ' · ' : done || p.booking_id ? '' : 'bez godziny · ') + (p.service || 'rytuał') + ' · ' +
         (!p.card_id ? 'bez karty, przypisz w Integracjach' : done ? (MODE_LABEL[p.status] || p.status) : p.stamps + '/10' + (p.stamps === 4 ? (day ? ' · −15%' : ' · teraz −15%') : p.stamps === 9 ? (day ? ' · −30%' : ' · teraz −30%') : ''));
       const target = p.card_id ? `data-open="${esc(p.card_id)}" data-plan="${day ? '' : esc(p.id)}"` : 'data-integr="1"';
-      const editBtn = `<button class="linkbtn" data-plan-edit="${esc(p.id)}" style="text-align:left;min-height:34px;padding:0 6px 4px 0;font-size:13.5px">${p.booking_id && !p.wo ? 'Usuń z planu' : p.start_at ? 'Przesuń lub usuń wizytę' : 'Ustaw godzinę, przesuń lub usuń'}</button>`;
+      const editBtn = `<button class="linkbtn" data-plan-edit="${esc(p.id)}" style="text-align:left;min-height:34px;padding:0 6px 4px 0;font-size:13.5px">${!p.editable ? 'Usuń z planu' : p.start_at ? 'Przesuń lub usuń wizytę' : 'Ustaw godzinę, przesuń lub usuń'}</button>`;
       const brk = breakOf(p);
       const breakBtn = brk === null ? '' : `<button class="linkbtn" data-plan-break="${esc(p.id)}" style="text-align:left;min-height:34px;padding:0 6px 4px 0;font-size:13.5px">${brk.short ? 'Przerwa po: ' + brk.min + ' min (skrócona)' : 'Skróć przerwę po (' + brk.min + ' min)'}</button>`;
       const timeLink = done ? '' : `<div style="flex-basis:100%;display:flex;flex-wrap:wrap;column-gap:16px;padding-left:58px">${editBtn}${breakBtn}</div>`;
@@ -1100,22 +1115,28 @@
       </div>`;
     if (day < 2) {
       const off = absenceNote(Rules.dayPL(day));
-      box.innerHTML = (off ? offBanner(off) : '') + '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
+      box.innerHTML = woDoneBox + (off ? offBanner(off) : '') + '<div class="panel panel--tight">' + plan.map(row).join('') + '</div>' + (todo || day ? '' : '<p class="small gold" style="margin:8px 0 0">Wszystkie wizyty z planu są zapisane.</p>');
     } else {
       // kolejne dni: wizyty pogrupowane według dnia
       const days = [...new Set(plan.map((p) => p.day))];
-      box.innerHTML = '<div style="display:flex;flex-direction:column;gap:12px">' + days.map((d) => {
+      box.innerHTML = woDoneBox + '<div style="display:flex;flex-direction:column;gap:12px">' + days.map((d) => {
         const list = plan.filter((p) => p.day === d);
         const off = absenceNote(d);
         return `<div style="display:flex;flex-direction:column;gap:6px"><span class="small">${esc(dateLabel(d).replace(/^./, (ch) => ch.toUpperCase()))} · ${list.length} ${list.length === 1 ? 'wizyta' : list.length < 5 ? 'wizyty' : 'wizyt'}${off ? ' <span class="tag">' + esc(off) + '</span>' : ''}</span><div class="panel panel--tight">${list.map(row).join('')}</div></div>`;
       }).join('') + '</div>';
     }
     box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.open, +b.dataset.plan || b.dataset.plan)));
+    box.querySelectorAll('[data-wodone-open]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.wodoneOpen, +b.dataset.wodonePlan || null)));
+    box.querySelectorAll('[data-wodone-hide]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await Api.planWoDoneHide(+b.dataset.wodoneHide); } catch (e) { fail(e); }
+      loadPlan();
+    }));
     box.querySelectorAll('[data-integr]').forEach((b) => b.addEventListener('click', () => { tab = 'integr'; renderHome(); window.scrollTo(0, 0); }));
     const pick = (id) => { const p = plan.find((x) => String(x.id) === id); if (p && !p.day) p.day = Rules.dayPL(day); return p; };
     box.querySelectorAll('[data-plan-edit]').forEach((b) => b.addEventListener('click', () => {
       const p = pick(b.dataset.planEdit);
-      if (p && p.booking_id && !p.wo) openPlanCancel(p); else openPlanEdit(p);
+      if (p && !p.editable) openPlanCancel(p); else openPlanEdit(p);
     }));
     // odwołana wizyta: usunięcie z planu (karta i pieczątki zostają bez zmian)
     box.querySelectorAll('[data-plan-break]').forEach((b) => b.addEventListener('click', () => {
@@ -1360,7 +1381,7 @@
       e.preventDefault();
       const err = $('#peErr');
       if (!d.value || d.value < Rules.dayPL(0) || d.value > Rules.dayPL(PLAN_AHEAD)) { err.textContent = 'Wybierz dzień od dziś do ' + PLAN_AHEAD + ' dni naprzód.'; err.hidden = false; return; }
-      if (p.wo && !t.value) { err.textContent = 'Wizyta z Wolnego Okienka musi mieć godzinę.'; err.hidden = false; return; }
+      if (p.booking_id && !t.value) { err.textContent = 'Wizyta z Booksy albo z Wolnego Okienka musi mieć godzinę.'; err.hidden = false; return; }
       const sms = !!($('#peSms') && $('#peSms').checked);
       const btn = $('#peSave'); btn.disabled = true;
       try {
@@ -1417,7 +1438,7 @@
         ${started ? '<label class="check"><input type="radio" name="pcWhy" value="noshow"> <span><b>Nie przyszła.</b> Bez uprzedzenia. Zapisze się w historii odwołań jako nieodbyta wizyta.</span></label>' : ''}
         <label class="check"><input type="radio" name="pcWhy" value="mistake"> <span><b>Pomyłka w planie.</b> Nikt nie dostanie oferty tego okienka i nic nie trafi do historii odwołań.</span></label>
         ${p.card_id && (!p.booking_id || p.wo) && future ? '<label class="check" id="pcSmsRow"><input type="checkbox" id="pcSms"> <span>Wyślij klientce SMS, że wizyta jest odwołana (i powiadomienie w aplikacji)</span></label>' : ''}
-        <p class="small" style="margin:0">Karta i pieczątki zostają bez zmian.${p.booking_id && !p.wo ? ' Rezerwację odwołaj też w Booksy, Booksy samo powiadomi klientkę.' : ' Odwołanie samo trafi do Wolnego Okienka, a stamtąd do Booksy.'}</p>
+        <p class="small" style="margin:0">Karta i pieczątki zostają bez zmian.${p.booking_id && !p.editable ? ' Rezerwację odwołaj też w Booksy, Booksy samo powiadomi klientkę.' : ' Odwołanie samo trafi do Wolnego Okienka, a stamtąd do Booksy.'}</p>
         <p class="error" id="pcErr" role="alert" hidden></p>
         <button class="btn btn--gold" type="submit" id="pcSave">Usuń z planu</button>
       </form>`);

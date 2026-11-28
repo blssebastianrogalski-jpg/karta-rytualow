@@ -1,5 +1,5 @@
 // Pamięć podręczna: aplikacja otwiera się szybko i działa przy słabym zasięgu.
-const VERSION = 'v54';
+const VERSION = 'v55';
 const ASSETS = [
   './', 'index.html', 'panel.html', 'config.js', 'css/style.css',
   'js/data.js', 'js/ui.js', 'js/client.js', 'js/panel.js', 'js/integracje.js',
