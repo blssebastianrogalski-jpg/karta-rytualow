@@ -103,6 +103,7 @@
       <button class="btn btn--gold" id="receiptBtn">Wystaw paragon</button>
       <button class="btn btn--line" id="newBtn">+ Nowa klientka bez aplikacji</button>
       <div id="smsAlert"></div>
+      <div id="booksyAlert"></div>
       <div id="risks"></div>
       <div id="reqs"></div>
       <div id="bdays"></div>
@@ -161,6 +162,7 @@
     loadInstallStats();
     loadRequests();
     loadSmsAlert();
+    loadBooksyAlert();
     loadRisks();
     loadGaps();
   }
@@ -174,6 +176,21 @@
   const range = (g) => hhmm(g.start_at) + '–' + hhmm(g.end_at);
   const bigDay = (d) => d === Rules.dayPL(0) ? 'Dziś' : d === Rules.dayPL(1) ? 'Jutro' : dateLabel(d).replace(/^./, (ch) => ch.toUpperCase());
   // Ostrzeżenie: SMS-y nie wychodzą (SMSPLANET bez środków albo problem z telefonem studia)
+  // Booksy: gdy skrypt Google przestał się łączyć (np. projekt trafił do kosza), ostrzeżenie na górze panelu.
+  async function loadBooksyAlert() {
+    let s = null;
+    try { s = Api.booksyStatus ? await Api.booksyStatus() : null; } catch (e) { s = null; }
+    const box = $('#booksyAlert');
+    if (!box) return;
+    const quiet = s && s.connected && s.script_last_seen ? Date.now() - new Date(s.script_last_seen) : 0;
+    if (quiet < 60 * 60000) { box.innerHTML = ''; return; }
+    const when = new Date(s.script_last_seen).toLocaleString('pl-PL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw' });
+    box.innerHTML = `<div class="hint hint--error" style="display:flex;flex-direction:column;gap:10px">
+      <span><span class="strong">Rezerwacje z Booksy nie dopisują się.</span> Skrypt Google na koncie studia nie odezwał się od ${esc(when)}. Nowe wizyty z Booksy nie trafiają do planu ani do Wolnego Okienka. Sprawdź na koncie jrtwojecialo@gmail.com, czy projekt skryptu nie jest w koszu i czy działa jego reguła.</span>
+      <span style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn--line btn--sm" href="https://script.google.com/home/triggers" target="_blank" rel="noopener">Otwórz reguły skryptu</a></span>
+    </div>`;
+  }
+
   async function loadSmsAlert() {
     const box = $('#smsAlert');
     let a = null;

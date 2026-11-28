@@ -36,11 +36,26 @@ const WO_KEY = 'sb_publishable_UHW9kVafsscGUjYZdHXM-g_YxKN0E3N';   // klucz publ
 function ustaw() {
   if (!KLUCZ || KLUCZ.indexOf('WKLEJ') === 0) throw new Error('Najpierw wklej klucz z panelu w miejsce KLUCZ.');
   ScriptApp.getProjectTriggers().forEach((t) => {
-    if (t.getHandlerFunction() === 'synchronizuj') ScriptApp.deleteTrigger(t);
+    if (t.getHandlerFunction() === 'synchronizuj' || t.getHandlerFunction() === 'pilnuj') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('synchronizuj').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('pilnuj').timeBased().everyHours(1).create();
   synchronizuj();
   Logger.log('Gotowe. Synchronizacja będzie działać co 5 minut.');
+}
+
+/** Ile dni maili czytać: co najmniej 3, a po przerwie tyle, ile trwała przerwa (+1 dzień zapasu), najwyżej 30. */
+function dniDoNadrobienia() {
+  const ok = +PropertiesService.getScriptProperties().getProperty('ostatni_ok') || 0;
+  if (!ok) return 3;
+  const dni = Math.ceil((Date.now() - ok) / 864e5) + 1;
+  return Math.min(30, Math.max(3, dni));
+}
+
+/** Strażnik (raz na godzinę): gdyby wyzwalacz co 5 minut zniknął, zakłada go od nowa. */
+function pilnuj() {
+  const jest = ScriptApp.getProjectTriggers().some((t) => t.getHandlerFunction() === 'synchronizuj');
+  if (!jest) { ScriptApp.newTrigger('synchronizuj').timeBased().everyMinutes(5).create(); synchronizuj(); }
 }
 
 /** Wyłącza automatyczną synchronizację (dane w aplikacji i kalendarzu zostają). */
@@ -66,7 +81,8 @@ function synchronizuj() {
       const importMode = cfg.import_state === 'preview_requested' ? 'preview' : cfg.import_state === 'apply_requested' ? 'apply' : null;
       const since = cfg.sync_since ? new Date(cfg.sync_since) : new Date();
       // zwykły przebieg: tylko nowe maile od podłączenia; starsze tylko przez import z podglądem
-      const events = importMode ? pobierzMaile(90, null) : pobierzMaile(3, since);
+      // po przerwie (np. skrypt był wyłączony) skrypt nadrabia: czyta maile od ostatniego udanego przebiegu, do 30 dni wstecz
+      const events = importMode ? pobierzMaile(90, null) : pobierzMaile(dniDoNadrobienia(), since);
       for (let i = 0; i < events.length; i += 40) {
         const part = events.slice(i, i + 40);
         const out = rpc('booksy_script_ingest', { p_key: KLUCZ, p_events: part, p_dry_run: importMode === 'preview' });
@@ -99,6 +115,7 @@ function synchronizuj() {
     if (woBlad) throw woBlad;
 
     rpc('booksy_script_finish', { p_key: KLUCZ, p_ok: true, p_stats: stats, p_import_preview: preview });
+    PropertiesService.getScriptProperties().setProperty('ostatni_ok', String(Date.now()));
   } catch (err) {
     try { rpc('booksy_script_finish', { p_key: KLUCZ, p_ok: false, p_error: String(err && err.message || err) }); } catch (e) { /* brak połączenia */ }
     throw err;
