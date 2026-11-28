@@ -11,8 +11,8 @@
  *  3. (Wolne Okienko) Wklej klucz z panelu Wolnego Okienka → Integracje w miejsce WO_KLUCZ.
  *     Wtedy skrypt działa w obie strony: wizyty z Wolnego Okienka trafiają tutaj, a maile Booksy
  *     (nowa rezerwacja, zmiana, odwołanie) także do Wolnego Okienka.
- *     Wizyty zatwierdzone w karcie (prośby o termin, wolne okienka) też trafiają do Wolnego Okienka
- *     (wymaga funkcji z supabase/wizyty-z-karty-do-wolnego-okienka.sql w bazie karty).
+ *     Wizyty zatwierdzone w karcie (prośby o termin, wolne okienka) też trafiają do Wolnego Okienka,
+ *     a zmiany w nich w obie strony (wymaga supabase/pelny-most.sql w bazie karty).
  */
 
 const KLUCZ = 'WKLEJ_TUTAJ_KLUCZ_Z_PANELU';
@@ -106,8 +106,8 @@ function synchronizuj() {
       try { stats.messages += pobierzZWolnegoOkienka(); } catch (err) { woBlad = err; }
       // 1c) maile Booksy → Wolne Okienko (żeby rezerwacje z Booksy blokowały termin także tam)
       try { stats.wo_booksy = wyslijDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
-      // 1d) wizyty zatwierdzone w karcie → Wolne Okienko (a stamtąd automat wpisuje je do Booksy)
-      try { stats.wo_karta = wyslijKarteDoWolnegoOkienka(); } catch (err) { woBlad = woBlad || err; }
+      // 1d) pełny most wizyt Karta ↔ Wolne Okienko (a stamtąd automat wpisuje je do Booksy)
+      try { stats.wo_karta = mostWizyt(); } catch (err) { woBlad = woBlad || err; }
       // 1e) skrócone przerwy po wizytach: Karta ↔ Wolne Okienko (wygrywa nowsza zmiana)
       try { stats.wo_przerwy = przerwyMiedzyAplikacjami(); } catch (err) { woBlad = woBlad || err; }
     }
@@ -231,6 +231,30 @@ function wyslijKarteDoWolnegoOkienka() {
   const out = rpcWO('integration_karta_sync', { p_key: WO_KLUCZ, p_snapshot: snap });
   const zmiany = (out.results || []).filter((r) => ['created', 'moved', 'cancelled', 'linked'].indexOf(r.result) !== -1).length;
   return zmiany + (out.cancelled || 0);
+}
+
+/**
+ * Pełny most wizyt Karta ↔ Wolne Okienko. Wygrywa nowsza zmiana, więc nic się nie odbija.
+ *  1) zmiany zrobione w Wolnym Okienku w wizytach z karty (godzina, dzień, rytuał, odwołanie) → karta,
+ *  2) pełna lista wizyt z karty (także sam rytuał, odbyta, nie przyszła, usunięte z powodem)
+ *     i wizyty z Wolnego Okienka zmienione w karcie → Wolne Okienko.
+ * Bez funkcji z supabase/pelny-most.sql w bazie karty działa jak dawniej (wyslijKarteDoWolnegoOkienka).
+ * Zwraca liczbę zmian.
+ */
+function mostWizyt() {
+  if (!WO_KLUCZ || WO_KLUCZ.indexOf('WKLEJ') === 0) return 0;
+  let zWo, doKarty;
+  try {
+    zWo = rpcWO('integration_karta_pull', { p_key: WO_KLUCZ });
+    doKarty = rpc('wo_script_karta_apply', { p_key: KLUCZ, p_items: (zWo && zWo.items) || [] });
+  } catch (err) {
+    if (String(err && err.message || err).indexOf('wo_script_karta_apply') !== -1) return wyslijKarteDoWolnegoOkienka();
+    throw err;
+  }
+  const snap = rpc('wo_script_karta_visits_v2', { p_key: KLUCZ });
+  const out = rpcWO('integration_karta_sync_v2', { p_key: WO_KLUCZ, p_snapshot: snap });
+  const zmiany = (out.results || []).filter((r) => ['created', 'moved', 'cancelled', 'linked', 'changed', 'completed', 'no_show'].indexOf(r.result) !== -1).length;
+  return zmiany + (out.cancelled || 0) + (out.removed || 0) + ((doKarty && doKarty.applied) || 0);
 }
 
 /**
