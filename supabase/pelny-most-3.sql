@@ -4,8 +4,8 @@
 --  • imię i nazwisko, telefon, e-mail i urodziny klientki w obie strony (wygrywa nowsza zmiana).
 --    Wolne Okienko łączy kartę z klientką tylko po pewnym telefonie (ten sam numer, jedna karta i jedna klientka),
 --    karta bez klientki tam = nowa klientka w Wolnym Okienku, a wątpliwe przypadki idą tam na listę do sprawdzenia.
---  • wizyty z Booksy, które są w Wolnym Okienku, a Karta ich nie ma (np. wpisane w Booksy przez studio, bez maila),
---    trafiają do planu jak mail Booksy.
+--  • gotowe przyjęcie wizyt z Booksy, których Karta nie ma (pozycje booksy_new, jak mail Booksy). Wolne Okienko
+--    jeszcze ich nie wysyła: najpierw musi wiedzieć, co naprawdę jest w Booksy (studio wpisuje część wizyt bez maila).
 -- Notatek nie przenosimy (w Karcie i w Wolnym Okienku służą czemu innemu).
 -- Wymaga wcześniejszego pelny-most-2.sql. Uruchom w Supabase → SQL Editor (można ponownie). Nie kasuje danych.
 
