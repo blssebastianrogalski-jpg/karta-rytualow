@@ -1203,6 +1203,8 @@
       planBreaks: async (from, to) => { try { return await rpc('plan_breaks', { p_from: from, p_to: to }); } catch (e) { if (noFn(e)) return null; throw e; } },
       // wizyty z Wolnego Okienka w planie (pelny-most.sql); bez tego pliku jak dawniej (tag Booksy, tylko usuwanie)
       planSources: async (from, to) => { try { return await rpc('plan_sources', { p_from: from, p_to: to }); } catch (e) { if (noFn(e)) return null; throw e; } },
+      planWoDone: async () => { try { return await rpc('plan_wo_done', {}); } catch (e) { if (noFn(e)) return null; throw e; } },
+      planWoDoneHide: (planId) => rpc('plan_wo_done_hide', { p_plan_id: planId }),
       planSetBreak: (planId, min) => rpc('plan_set_break', { p_plan_id: planId, p_min: min === null || min === undefined ? null : min }),
       incidentsCard: async (cardId) => { try { return await rpc('incidents_card', { p_card: cardId }); } catch (e) { if (noFn(e)) return null; throw e; } },
       incidentAdd: (cardId, day, kind, note) => rpc('incident_add', { p_card: cardId, p_day: day, p_kind: kind, p_note: note || null }),
