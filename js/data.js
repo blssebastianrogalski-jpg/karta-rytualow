@@ -125,7 +125,7 @@
       return a ? 'Masz wtedy wolne' + (a.time_from ? ' (' + a.time_from + '–' + a.time_to + ')' : '') : null;
     },
     fullDay(db, day) { return (db.absences || []).some((x) => !x.time_from && x.day_from <= day && day <= x.day_to); },
-    check(db, start, min) {
+    check(db, start, min, card) {
       const day = Slots.ymd(start), h = Slots.hours[start.getDay() || 7];
       if (!h) return 'Studio nieczynne tego dnia';
       const off = Slots.absence(db, start, new Date(+start + min * 6e4));
@@ -134,8 +134,11 @@
       const end = new Date(+start + min * 6e4);
       if (start < Slots.at(day, h[0]) || end > Slots.at(day, h[1])) return 'Poza godzinami pracy (' + h[0] + '–' + h[1] + ')';
       const hit = (db.plan || []).filter((p) => p.day === day && p.status === 'planned' && p.start_at).filter((p) => {
-        const s = new Date(p.start_at), e = new Date(+s + (Slots.minutes(p.service) + (p.break_min === undefined || p.break_min === null ? Slots.brk : p.break_min)) * 6e4);
-        return s < new Date(+end + Slots.brk * 6e4) && start < e;
+        // ta sama klientka (dwa zabiegi po sobie): bez przerwy między jej wizytami (jak slot_conflict_card)
+        const same = card && p.card_id === card;
+        const brk = same ? 0 : p.break_min === undefined || p.break_min === null ? Slots.brk : p.break_min;
+        const s = new Date(p.start_at), e = new Date(+s + (Slots.minutes(p.service) + brk) * 6e4);
+        return s < new Date(+end + (same ? 0 : Slots.brk) * 6e4) && start < e;
       });
       if (!hit.length) return 'ok';
       return 'Nakłada się na: ' + hit.map((p) => { const c = db.cards.find((x) => x.id === p.card_id); return (c ? c.name : 'Klientka') + ' ' + Slots.hm(new Date(p.start_at)) + (p.service ? ' (' + p.service + ')' : ''); }).join(', ');
@@ -520,8 +523,12 @@
         const db = load();
         day = day || Rules.dayPL(0);
         db.plan = db.plan || [];
-        if (db.plan.some((p) => p.card_id === cardId && p.day === day && p.status === 'planned')) throw new Error('Ta klientka jest już w planie na ten dzień.');
-        db.plan.push({ id: Date.now(), card_id: cardId, day, service: service || null, status: 'planned', start_at: time ? new Date(day + 'T' + time).toISOString() : null });
+        const st = time ? new Date(day + 'T' + time).toISOString() : null;
+        // jak dwa-zabiegi-po-sobie.sql: drugi zabieg tego dnia tylko z inną godziną
+        if (db.plan.some((p) => p.card_id === cardId && p.day === day && p.status === 'planned' && (!st || !p.start_at || p.start_at === st))) {
+          throw new Error(st ? 'Ta klientka jest już w planie na ten dzień bez godziny albo o tej samej godzinie. Najpierw ustaw godzinę tamtej wizyty.' : 'Ta klientka jest już w planie na ten dzień. Podaj godzinę, żeby dodać drugi zabieg.');
+        }
+        db.plan.push({ id: Date.now(), card_id: cardId, day, service: service || null, status: 'planned', start_at: st });
         save(db);
       }),
       planSetTime: (planId, time) => run(() => {
@@ -899,8 +906,8 @@
         return { id: a.id, clashes: absenceClashes(db, a) };
       }),
       absenceDelete: (id) => run(() => { guard(); const db = load(); db.absences = (db.absences || []).filter((a) => a.id !== id); save(db); }),
-      slotConflict: (day, time, service) => run(() => {
-        guard(); const res = Slots.check(load(), new Date(day + 'T' + time), Slots.minutes(service || null));
+      slotConflict: (day, time, service, card) => run(() => {
+        guard(); const res = Slots.check(load(), new Date(day + 'T' + time), Slots.minutes(service || null), card || null);
         return res === 'ok' || res === 'Za krótko przed wizytą' ? null : res;
       }),
       deleteCard: (id) => run(() => { guard(); const db = load(); db.cards = db.cards.filter((x) => x.id !== id); save(db); }),
@@ -1158,7 +1165,13 @@
       requestCreate: (token, f) => rpc('request_create', Object.assign({ p_token: token, p_service: f.service || null, p_day: f.day, p_part: f.part || 'any', p_time: f.time || null, p_phone: f.phone, p_message: f.message || null }, f.retryOf ? { p_retry_of: f.retryOf } : {}, f.moveOf ? { p_move_of: f.moveOf } : {})),
       visitCancel: (token, planId) => rpc('visit_cancel', { p_token: token, p_plan_id: planId }),
       requestPick: (token, id, start) => rpc('request_pick', { p_token: token, p_id: id, p_start: start }),
-      slotConflict: (day, time, service) => rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null }),
+      // z kartą klientki: bez przerwy między jej dwoma zabiegami (dwa-zabiegi-po-sobie.sql); bez tego pliku jak dawniej
+      slotConflict: async (day, time, service, card) => {
+        if (card) {
+          try { return await rpc('slot_conflict_card', { p_day: day, p_time: time, p_service: service || null, p_card: card }); } catch (e) { if (!noFn(e)) throw e; }
+        }
+        return rpc('slot_conflict', { p_day: day, p_time: time, p_service: service || null });
+      },
       closedDays: (token) => rpc('closed_days', { p_token: token }),
       absenceList: () => rpc('absence_list', {}),
       absenceAdd: (f) => rpc('absence_add', { p_from: f.from, p_to: f.to || null, p_time_from: f.timeFrom || null, p_time_to: f.timeTo || null, p_note: f.note || null }),

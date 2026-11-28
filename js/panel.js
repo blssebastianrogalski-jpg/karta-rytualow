@@ -887,7 +887,7 @@
       const el = $('#okWarn'); if (!el) return;
       const day = $('#okDay').value, time = $('#okTime').value;
       let res = null;
-      if (day && time) { try { res = await Api.slotConflict(day, time, $('#okSvc').value || r.service); } catch (ex) { res = null; } }
+      if (day && time) { try { res = await Api.slotConflict(day, time, $('#okSvc').value || r.service, r.card_id); } catch (ex) { res = null; } }
       el.textContent = res ? 'Uwaga: ' + res : ''; el.hidden = !res;
     };
     ['#okDay', '#okTime', '#okSvc'].forEach((id) => $(id).addEventListener('change', warn));
@@ -1259,12 +1259,12 @@
   // ---------- godzina wizyty w planie ----------
   const svcOptions = (sel) => CFG.SERVICES.map((x) => `<option${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
   // ostrzeżenie o kolizji z planem / godzinami pracy (nie blokuje zapisu); self = imię tej klientki (jej stara godzina to nie kolizja)
-  function timeWarn(dayOf, timeSel, svcSel, warnSel, self, more) {
+  function timeWarn(dayOf, timeSel, svcSel, warnSel, self, more, card) {
     const run = async () => {
       const el = $(warnSel); if (!el) return;
       const time = $(timeSel).value, day = typeof dayOf === 'function' ? dayOf() : dayOf;
       let res = null;
-      if (day && time) { try { res = await Api.slotConflict(day, time, $(svcSel) ? $(svcSel).value : null); } catch (ex) { res = null; } }
+      if (day && time) { try { res = await Api.slotConflict(day, time, $(svcSel) ? $(svcSel).value : null, card); } catch (ex) { res = null; } }
       if (res && self && /^Nakłada się na: /.test(res)) {
         const others = res.replace(/^Nakłada się na: /, '').split(', ').filter((x) => x.indexOf(self + ' ') !== 0);
         res = others.length ? 'Nakłada się na: ' + others.join(', ') : null;
@@ -1304,7 +1304,7 @@
     };
     [t, d].forEach((el) => { el.addEventListener('input', label); el.addEventListener('change', label); });
     label();
-    timeWarn(() => d.value, '#paTime', '#paSvc', '#paWarn', null, ['#paDay']);
+    timeWarn(() => d.value, '#paTime', '#paSvc', '#paWarn', null, ['#paDay'], c.id);
     $('#paForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = $('#paErr');
@@ -1350,7 +1350,7 @@
     };
     [d, t].forEach((el) => { el.addEventListener('input', label); el.addEventListener('change', label); });
     label();
-    timeWarn(() => d.value, '#peTime', '#peSvc', '#peWarn', p.name, ['#peDay']);
+    timeWarn(() => d.value, '#peTime', '#peSvc', '#peWarn', p.name, ['#peDay'], p.card_id);
     $('#peDel').addEventListener('click', () => openPlanCancel(p));
     $('#peForm').addEventListener('submit', async (e) => {
       e.preventDefault();
